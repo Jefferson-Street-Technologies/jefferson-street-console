@@ -605,45 +605,11 @@ class ExplorerScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self._generate_query_representations()
-        self.run_query()
-
-    def _generate_query_representations(self) -> None:
-        kwargs = self.session.to_query_kwargs()
-
-        self.query_json_str = json.dumps(kwargs, indent=2)
-
-        py_args = [f"    {key}={value!r}" for key, value in kwargs.items()]
-        py_args_str = ",\n".join(py_args)
-        self.python_code = f"""from jstdata import JSTDataClient
-
-client = JSTDataClient()
-df = client.query_df(
-{py_args_str}
-)
-print(df)"""
-
-        cli_parts = ["jst query"]
-        for m in self.session.metric:
-            cli_parts.append(f"--metric {m}")
-        for e in self.session.entity:
-            cli_parts.append(f"--entity {e}")
-        for s in self.session.series:
-            cli_parts.append(f"--series {s}")
-        if self.session.frequency:
-            cli_parts.append(f"--frequency {self.session.frequency}")
-        if self.session.start_date:
-            cli_parts.append(f"--start-date {self.session.start_date}")
-        if self.session.end_date:
-            cli_parts.append(f"--end-date {self.session.end_date}")
-        if self.session.start_time is not None:
-            cli_parts.append(f"--start-time {self.session.start_time}")
-        if self.session.end_time is not None:
-            cli_parts.append(f"--end-time {self.session.end_time}")
-        self.cli_command = " ".join(cli_parts)
-
+        self.python_code = self.session.to_python()
+        self.cli_command = self.session.to_cli()
         self.query_one("#python-code-display", Static).update(self.python_code)
         self.query_one("#cli-command-display", Static).update(self.cli_command)
+        self.run_query()
 
     def _copy_to_clipboard(self, text: str) -> None:
         import subprocess
@@ -671,28 +637,9 @@ print(df)"""
 
     @on(Button.Pressed, "#export-csv-btn")
     def export_csv(self) -> None:
-        import csv
-
-        table = self.query_one("#explorer-table", DataTable)
-        headers = [getattr(col.label, "plain", str(col.label)) for col in table.columns.values()]
-
-        rows = []
-        for row_key in table.rows:
-            rows.append(table.get_row(row_key))
-
-        if not rows:
-            self.notify("No data to export", severity="warning")
-            return
-
-        date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"jst_export_{date_str}.csv"
-
         try:
-            with open(filename, "w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(headers)
-                writer.writerows(rows)
-            self.notify(f"Data successfully exported to {filename}")
+            path = self.session.to_csv(self.client, order_by="desc")
+            self.notify(f"Data successfully exported to {path}")
         except Exception as e:
             self.notify(f"Failed to export CSV: {e}", severity="error")
 
@@ -702,12 +649,10 @@ print(df)"""
         table.clear(columns=True)
         table.add_columns("DATE", "LABEL", "VALUE", "UNITS", "SOURCE")
 
-        kwargs = self.session.to_query_kwargs()
-        if "order_by" not in kwargs:
-            kwargs["order_by"] = "desc"
-
         try:
-            time_series_list = await asyncio.to_thread(self.client.query, **kwargs)
+            time_series_list = await asyncio.to_thread(
+                self.session.execute, self.client, order_by="desc"
+            )
 
             rcount = 0
             if not time_series_list:
@@ -715,22 +660,22 @@ print(df)"""
                 self.query_one("#explorer-status").update("NO RESULTS")
             else:
                 for t in time_series_list:
-                    observations = t.observations
-                    for o in observations:
+                    for o in t.observations:
                         table.add_row(
                             o.observation_timestamp.strftime("%Y-%m-%d"),
                             t.series.label,
                             f"{o.value:,.4f}",
                             t.series.units,
-                            t.series.source
+                            t.series.source,
                         )
                         rcount += 1
-                    self.query_one("#explorer-status").update("READY")
+                self.query_one("#explorer-status").update("READY")
 
             self.query_one("#explorer-count").update(f"ROWS: {rcount}")
         except Exception as e:
             self.notify(f"Query error: {e}", severity="error")
             self.query_one("#explorer-status").update("ERROR")
+
 
 
 class HelpScreen(ModalScreen):
