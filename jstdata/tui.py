@@ -7,13 +7,15 @@ from textual import on, work
 import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import Any, TypeAlias
 
 from .client import JSTDataClient
-from .models import Series, Entity, Metric, EntityRelationship
+from .models import Series, Entity, Metric, EntityRelationship, Resource as ApiResource
+from .session import Session
 
-Resource: TypeAlias = Series | Entity | Metric
-InspectorResource: TypeAlias = Resource | EntityRelationship
+Resource: TypeAlias = Series | Entity | Metric | ApiResource
+InspectorResource: TypeAlias = Series | Entity | Metric | EntityRelationship
 
 # --- Custom Widgets ---
 
@@ -117,11 +119,13 @@ class WorkspaceScreen(Screen):
     def __init__(
         self,
         client: JSTDataClient,
+        session: Session,
         basket: list[Resource],
         initial_session_path: str | None = None,
     ) -> None:
         super().__init__()
         self.client = client
+        self.session = session
         self.basket = basket
         self.initial_session_path = initial_session_path
 
@@ -180,34 +184,58 @@ class WorkspaceScreen(Screen):
             self.load_session(self.initial_session_path)
 
     def save_session(self, filepath: str) -> None:
-        """Save current basket state to a JSON file."""
-        import json
-        state = {
-            "metrics": [r.id for r in self.basket if isinstance(r, Metric)],
-            "entities": [r.id for r in self.basket if isinstance(r, Entity)],
-            "series": [r.id for r in self.basket if isinstance(r, Series)],
-        }
-        with open(filepath, "w") as f:
-            json.dump(state, f, indent=2)
+        """Persist the current session to a JSON file."""
+        self.session.save(filepath)
         self.notify(f"Session saved to {filepath}")
+
     def load_session(self, filepath: str) -> None:
-        """Load basket state from a JSON file."""
+        """Load a session from JSON and refresh the staging basket."""
         try:
-            with open(filepath, "r") as f:
-                state = json.load(f)
-            
-            self.basket.clear()
-            
-            resources = state.get("metrics", []) + state.get("entities", []) + state.get("series", [])
-            self.basket.extend(self.client.get_resources(resources))
-            
+            loaded = Session.load(filepath)
+            self.session.metric = list(loaded.metric)
+            self.session.entity = list(loaded.entity)
+            self.session.series = list(loaded.series)
+            self.session.frequency = loaded.frequency
+            self.session.start_date = loaded.start_date
+            self.session.end_date = loaded.end_date
+            self.session.start_time = loaded.start_time
+            self.session.end_time = loaded.end_time
+            self.session.order_by = loaded.order_by
+
+            self._hydrate_basket_from_session()
             self._rebuild_basket_list()
             self._update_stats()
-            self.notify(f"Loaded {len(self.basket)} items from session")
+            self.notify(f"Loaded {len(self.session.resource_ids())} items from session")
         except FileNotFoundError:
             self.notify(f"Session file not found: {filepath}", severity="error")
         except json.JSONDecodeError as e:
             self.notify(f"Invalid JSON in session file: {e}", severity="error")
+
+    def _hydrate_basket_from_session(self) -> None:
+        """Rebuild the display basket from session IDs (labels via API)."""
+        self.basket.clear()
+        ids = self.session.resource_ids()
+        if not ids:
+            return
+
+        labels = {r.id: r.label for r in self.client.get_resources(ids)}
+        for mid in self.session.metric:
+            self.basket.append(Metric(id=mid, name=labels.get(mid, mid)))
+        for eid in self.session.entity:
+            self.basket.append(Entity(id=eid, label=labels.get(eid, eid)))
+        for sid in self.session.series:
+            self.basket.append(
+                Series(
+                    id=sid,
+                    label=labels.get(sid, sid),
+                    frequency="",
+                    source="",
+                    units="",
+                    seasonal_adjustment="",
+                    last_updated=datetime.min,
+                    metric_id="",
+                )
+            )
 
     def _save_session_result(self, filepath: str | None) -> None:
         if filepath:
@@ -224,11 +252,11 @@ class WorkspaceScreen(Screen):
             resource = list_view.highlighted_child.resource
             self._start_inspector_search(resource)
     def action_execute_query(self) -> None:
-        """Execute the query for the staging basket."""
-        if not self.basket:
+        """Execute the query for the current session."""
+        if self.session.is_empty():
             self.notify("Basket is empty", severity="warning")
             return
-        self.app.push_screen(ExplorerScreen(self.client, list(self.basket)))
+        self.app.push_screen(ExplorerScreen(self.client, self.session))
     def action_save_session(self) -> None:
         """Save current session to a prompt file."""
         self.app.push_screen(
@@ -251,6 +279,7 @@ class WorkspaceScreen(Screen):
             item_widget = basket_list.highlighted_child  # BasketItem
             if isinstance(item_widget, BasketItem):
                 resource = item_widget.resource
+                self.session.remove_id(resource.id)
                 self.basket[:] = [i for i in self.basket if i.id != resource.id]
                 self._rebuild_basket_list()
                 self._update_stats()
@@ -292,18 +321,34 @@ class WorkspaceScreen(Screen):
     @on(ListView.Selected, "#results-list")
     def add_to_basket(self, event: ListView.Selected) -> None:
         resource = event.item.resource
-        if resource.id not in [i.id for i in self.basket]:
-            self.basket.append(resource)
-            self._rebuild_basket_list()
-            self.notify("Added to basket")
-            self._update_stats()
+        if not self._add_resource_to_session(resource):
+            return
+        self.basket.append(resource)
+        self._rebuild_basket_list()
+        self.notify("Added to basket")
+        self._update_stats()
+
     @on(Button.Pressed, ".remove-btn")
     def remove_from_basket(self, event: Button.Pressed) -> None:
-        item_widget = event.button.parent.parent # BasketItem
+        item_widget = event.button.parent.parent  # BasketItem
         resource = item_widget.resource
+        self.session.remove_id(resource.id)
         self.basket[:] = [i for i in self.basket if i.id != resource.id]
         self._rebuild_basket_list()
         self._update_stats()
+
+    def _add_resource_to_session(self, resource: Resource) -> bool:
+        """Update the session for a newly staged resource. Returns False if duplicate."""
+        if isinstance(resource, Metric):
+            return self.session.add_metric(resource.id)
+        if isinstance(resource, Entity):
+            return self.session.add_entity(resource.id)
+        if isinstance(resource, Series):
+            return self.session.add_series(resource.id)
+        # Untyped API resource: treat as series only if already classified elsewhere
+        if resource.id in self.session.resource_ids():
+            return False
+        return self.session.add_series(resource.id)
     def _rebuild_basket_list(self) -> None:
         try:
             basket_list = self.query_one("#basket-list", ListView)
@@ -340,8 +385,7 @@ class WorkspaceScreen(Screen):
                     basket_list.index = index
                     break
     def _update_stats(self) -> None:
-        # Mocking for now as per point (3)
-        self.query_one("#stat-series").update(str(len(self.basket)))
+        self.query_one("#stat-series").update(str(len(self.session.resource_ids())))
         self.query_one("#stat-obs").update("---")
     def _start_inspector_search(self, resource: Any) -> None:
         """Switch view to inspector interactive search and begin prefetch."""
@@ -516,14 +560,15 @@ class WorkspaceScreen(Screen):
                 resource = item
             else:
                 return
-                
-            if resource.id not in [i.id for i in self.basket]:
-                self.basket.append(resource)
-                self._rebuild_basket_list()
-                self.notify(f"Added {resource.id} to basket")
-                self._update_stats()
-            else:
+
+            if not self._add_resource_to_session(resource):
                 self.notify(f"{resource.id} is already in basket", severity="warning")
+                return
+
+            self.basket.append(resource)
+            self._rebuild_basket_list()
+            self.notify(f"Added {resource.id} to basket")
+            self._update_stats()
         except Exception as e:
             self.notify(f"Error adding to basket: {e}", severity="error")
 
@@ -531,10 +576,10 @@ class WorkspaceScreen(Screen):
 class ExplorerScreen(Screen):
     """The result viewer (Tab 2)."""
 
-    def __init__(self, client: JSTDataClient, basket: list[Resource]) -> None:
+    def __init__(self, client: JSTDataClient, session: Session) -> None:
         super().__init__()
         self.client = client
-        self.basket = basket
+        self.session = session
     
     def compose(self) -> ComposeResult:
         yield Header()
@@ -564,30 +609,11 @@ class ExplorerScreen(Screen):
         self.run_query()
 
     def _generate_query_representations(self) -> None:
-        m_ids = [r.id for r in self.basket if isinstance(r, Metric)]
-        e_ids = [r.id for r in self.basket if isinstance(r, Entity)]
-        s_ids = [r.id for r in self.basket if isinstance(r, Series)]
-        
-        # Behind the scenes JSON representation
-        query_json = {}
-        if m_ids:
-            query_json["metric"] = m_ids
-        if e_ids:
-            query_json["entity"] = e_ids
-        if s_ids:
-            query_json["series"] = s_ids
-            
-        self.query_json_str = json.dumps(query_json, indent=2)
-        
-        # Python representation
-        py_args = []
-        if m_ids:
-            py_args.append(f"    metric={m_ids}")
-        if e_ids:
-            py_args.append(f"    entity={e_ids}")
-        if s_ids:
-            py_args.append(f"    series={s_ids}")
-            
+        kwargs = self.session.to_query_kwargs()
+
+        self.query_json_str = json.dumps(kwargs, indent=2)
+
+        py_args = [f"    {key}={value!r}" for key, value in kwargs.items()]
         py_args_str = ",\n".join(py_args)
         self.python_code = f"""from jstdata import JSTDataClient
 
@@ -597,17 +623,25 @@ df = client.query_df(
 )
 print(df)"""
 
-        # CLI representation
         cli_parts = ["jst query"]
-        for m in m_ids:
+        for m in self.session.metric:
             cli_parts.append(f"--metric {m}")
-        for e in e_ids:
+        for e in self.session.entity:
             cli_parts.append(f"--entity {e}")
-        for s in s_ids:
+        for s in self.session.series:
             cli_parts.append(f"--series {s}")
+        if self.session.frequency:
+            cli_parts.append(f"--frequency {self.session.frequency}")
+        if self.session.start_date:
+            cli_parts.append(f"--start-date {self.session.start_date}")
+        if self.session.end_date:
+            cli_parts.append(f"--end-date {self.session.end_date}")
+        if self.session.start_time is not None:
+            cli_parts.append(f"--start-time {self.session.start_time}")
+        if self.session.end_time is not None:
+            cli_parts.append(f"--end-time {self.session.end_time}")
         self.cli_command = " ".join(cli_parts)
-        
-        # Update static displays
+
         self.query_one("#python-code-display", Static).update(self.python_code)
         self.query_one("#cli-command-display", Static).update(self.cli_command)
 
@@ -638,22 +672,21 @@ print(df)"""
     @on(Button.Pressed, "#export-csv-btn")
     def export_csv(self) -> None:
         import csv
-        from datetime import datetime
-        
+
         table = self.query_one("#explorer-table", DataTable)
         headers = [getattr(col.label, "plain", str(col.label)) for col in table.columns.values()]
-        
+
         rows = []
         for row_key in table.rows:
             rows.append(table.get_row(row_key))
-            
+
         if not rows:
             self.notify("No data to export", severity="warning")
             return
-            
+
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"jst_export_{date_str}.csv"
-        
+
         try:
             with open(filename, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
@@ -668,20 +701,14 @@ print(df)"""
         table = self.query_one("#explorer-table", DataTable)
         table.clear(columns=True)
         table.add_columns("DATE", "LABEL", "VALUE", "UNITS", "SOURCE")
-        
-        m_ids = [r.id for r in self.basket if isinstance(r, Metric)]
-        e_ids = [r.id for r in self.basket if isinstance(r, Entity)]
-        s_ids = [r.id for r in self.basket if isinstance(r, Series)]
-        
+
+        kwargs = self.session.to_query_kwargs()
+        if "order_by" not in kwargs:
+            kwargs["order_by"] = "desc"
+
         try:
-            time_series_list = await asyncio.to_thread(
-                self.client.query,
-                metric=m_ids or None,
-                entity=e_ids or None,
-                series=s_ids or None,
-                order_by='desc'
-            )
-            
+            time_series_list = await asyncio.to_thread(self.client.query, **kwargs)
+
             rcount = 0
             if not time_series_list:
                 self.notify("No results found", severity="warning")
@@ -699,7 +726,7 @@ print(df)"""
                         )
                         rcount += 1
                     self.query_one("#explorer-status").update("READY")
-            
+
             self.query_one("#explorer-count").update(f"ROWS: {rcount}")
         except Exception as e:
             self.notify(f"Query error: {e}", severity="error")
@@ -1071,12 +1098,14 @@ class JSTDataApp(App):
         super().__init__()
         self.client = client
         self.session_path = session_path
+        self.session = Session()
         self.basket: list[Resource] = []
 
     def on_mount(self) -> None:
         self.push_screen(
             WorkspaceScreen(
                 client=self.client,
+                session=self.session,
                 basket=self.basket,
                 initial_session_path=self.session_path,
             )
