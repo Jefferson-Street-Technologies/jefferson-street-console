@@ -13,6 +13,8 @@ from typing import Any, TypeAlias
 from .client import JSTDataClient
 from .models import Series, Entity, Metric, EntityRelationship, Resource as ApiResource
 from .session import Session
+from .workflows.base import apply_loaded_session, default_session_path, load_session_or_empty
+from .workflows.offramp import OfframpModal, copy_to_clipboard
 
 Resource: TypeAlias = Series | Entity | Metric | ApiResource
 InspectorResource: TypeAlias = Series | Entity | Metric | EntityRelationship
@@ -112,7 +114,6 @@ class WorkspaceScreen(Screen):
         Binding("backspace", "remove_basket_item", "Remove Basket Item"),
         Binding("j", "cursor_down", "Cursor Down", show=False),
         Binding("k", "cursor_up", "Cursor Up", show=False),
-        Binding("s", "save_session", "Save Session"),
         Binding("l", "load_session", "Load Session"),
     ]
 
@@ -121,13 +122,11 @@ class WorkspaceScreen(Screen):
         client: JSTDataClient,
         session: Session,
         basket: list[Resource],
-        initial_session_path: str | None = None,
     ) -> None:
         super().__init__()
         self.client = client
         self.session = session
         self.basket = basket
-        self.initial_session_path = initial_session_path
 
         self.search_task: asyncio.Task[None] | None = None
         self.inspector_search_task: asyncio.Task[None] | None = None
@@ -174,34 +173,20 @@ class WorkspaceScreen(Screen):
         with Horizontal(id="cmd-bar"):
             yield Label(">", id="cmd-prompt")
             yield Input(placeholder="SEARCH_DATABASE (ENTITY | METRIC | DATASET) ...", id="search-input")
-            yield Label("Press [bold]?[/bold] for keybindings // [bold]ctrl+e[/bold] to run", id="help-hint")
+            yield Label("Press [bold]?[/bold] for help // [bold]s[/bold] save // [bold]o[/bold] offramp // [bold]ctrl+e[/bold] run", id="help-hint")
 
     def on_mount(self) -> None:
         self.query_one("#search-input").focus()
+        if self.session.resource_ids() and not self.basket:
+            self._hydrate_basket_from_session()
         self._rebuild_basket_list()
-
-        if self.initial_session_path:
-            self.load_session(self.initial_session_path)
-
-    def save_session(self, filepath: str) -> None:
-        """Persist the current session to a JSON file."""
-        self.session.save(filepath)
-        self.notify(f"Session saved to {filepath}")
+        self._update_stats()
 
     def load_session(self, filepath: str) -> None:
         """Load a session from JSON and refresh the staging basket."""
         try:
             loaded = Session.load(filepath)
-            self.session.metric = list(loaded.metric)
-            self.session.entity = list(loaded.entity)
-            self.session.series = list(loaded.series)
-            self.session.frequency = loaded.frequency
-            self.session.start_date = loaded.start_date
-            self.session.end_date = loaded.end_date
-            self.session.start_time = loaded.start_time
-            self.session.end_time = loaded.end_time
-            self.session.order_by = loaded.order_by
-
+            apply_loaded_session(self.session, loaded)
             self._hydrate_basket_from_session()
             self._rebuild_basket_list()
             self._update_stats()
@@ -237,10 +222,6 @@ class WorkspaceScreen(Screen):
                 )
             )
 
-    def _save_session_result(self, filepath: str | None) -> None:
-        if filepath:
-            self.save_session(filepath)
-
     def _load_session_result(self, filepath: str | None) -> None:
         if filepath:
             self.load_session(filepath)
@@ -257,16 +238,11 @@ class WorkspaceScreen(Screen):
             self.notify("Basket is empty", severity="warning")
             return
         self.app.push_screen(ExplorerScreen(self.client, self.session))
-    def action_save_session(self) -> None:
-        """Save current session to a prompt file."""
-        self.app.push_screen(
-            SessionModal("Save session to file:", "session.json", default="session.json"),
-            self._save_session_result,
-        )
     def action_load_session(self) -> None:
         """Load session from a prompt file."""
+        default = getattr(self.app, "output_path", "session.json")
         self.app.push_screen(
-            SessionModal("Load session from file:", "session.json", default="session.json"),
+            SessionModal("Load session from file:", "session.json", default=default),
             self._load_session_result,
         )
     def action_remove_basket_item(self) -> None:
@@ -611,28 +587,14 @@ class ExplorerScreen(Screen):
         self.query_one("#cli-command-display", Static).update(self.cli_command)
         self.run_query()
 
-    def _copy_to_clipboard(self, text: str) -> None:
-        import subprocess
-        import sys
-        if sys.platform == "darwin":
-            try:
-                subprocess.run(["pbcopy"], input=text, text=True, check=True)
-                return
-            except Exception:
-                pass
-        try:
-            self.app.copy_to_clipboard(text)
-        except Exception:
-            pass
-
     @on(Button.Pressed, "#copy-python-btn")
     def copy_python_code(self) -> None:
-        self._copy_to_clipboard(self.python_code)
+        copy_to_clipboard(self.app, self.python_code)
         self.notify("Python snippet copied to clipboard!")
 
     @on(Button.Pressed, "#copy-cli-btn")
     def copy_cli_command(self) -> None:
-        self._copy_to_clipboard(self.cli_command)
+        copy_to_clipboard(self.app, self.cli_command)
         self.notify("CLI command copied to clipboard!")
 
     @on(Button.Pressed, "#export-csv-btn")
@@ -743,7 +705,8 @@ class HelpScreen(ModalScreen):
             yield Horizontal(Label("j / ↓", classes="key-col"), Label("Move highlight down", classes="desc-col"), classes="key-row")
             yield Horizontal(Label("k / ↑", classes="key-col"), Label("Move highlight up", classes="desc-col"), classes="key-row")
             yield Horizontal(Label("?", classes="key-col"), Label("Show this help menu", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("s", classes="key-col"), Label("Save session", classes="desc-col"), classes="key-row")
+            yield Horizontal(Label("s", classes="key-col"), Label("Save session (prompt)", classes="desc-col"), classes="key-row")
+            yield Horizontal(Label("o", classes="key-col"), Label("Offramp (Python / CLI / write)", classes="desc-col"), classes="key-row")
             yield Horizontal(Label("l", classes="key-col"), Label("Load session", classes="desc-col"), classes="key-row")
 
             yield Button("CLOSE (ESC)", variant="error", id="help-close-btn")
@@ -1033,17 +996,22 @@ class JSTDataApp(App):
         Binding("ctrl+c", "quit", "Quit"),
         Binding("escape", "back", "Back"),
         Binding("question_mark", "show_help", "Show Keybindings", key_display="?"),
+        Binding("s", "save_session", "Save"),
+        Binding("o", "offramp", "Offramp"),
     ]
 
     def __init__(
         self,
         client: JSTDataClient,
         session_path: str | None = None,
+        output_path: str | None = None,
+        workflow_id: str = "console",
     ) -> None:
         super().__init__()
         self.client = client
-        self.session_path = session_path
-        self.session = Session()
+        self.workflow_id = workflow_id
+        self.output_path = output_path or default_session_path(workflow_id)
+        self.session = load_session_or_empty(session_path)
         self.basket: list[Resource] = []
 
     def on_mount(self) -> None:
@@ -1052,9 +1020,34 @@ class JSTDataApp(App):
                 client=self.client,
                 session=self.session,
                 basket=self.basket,
-                initial_session_path=self.session_path,
             )
         )
+
+    def action_save_session(self) -> None:
+        """User-initiated session write with unique default path."""
+        self.push_screen(
+            SessionModal(
+                "Save session to file:",
+                self.output_path,
+                default=self.output_path,
+            ),
+            self._on_save_session_path,
+        )
+
+    def _on_save_session_path(self, filepath: str | None) -> None:
+        if not filepath:
+            return
+        try:
+            self.session.save(filepath)
+            self.output_path = filepath
+            self.notify(f"Session saved to {filepath}")
+        except Exception as e:
+            self.notify(f"Failed to save session: {e}", severity="error")
+
+    def action_offramp(self) -> None:
+        """Shared offramp: copy Python/CLI or write session."""
+        self.push_screen(OfframpModal(self.session, default_path=self.output_path))
+
     def action_back(self) -> None:
         """Return to workspace or leave inspector focus."""
         if isinstance(self.screen, ExplorerScreen):

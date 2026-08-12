@@ -230,27 +230,65 @@ def query(metric, entity, series, frequency, start_date, end_date, start_time, e
 @cli.command()
 def tui():
     """
-    Launch the interactive TUI workbench.
+    Launch the interactive TUI workbench (alias for `jst workflow console`).
     """
-    from .tui import JSTDataApp
-    app = JSTDataApp(client)
-    app.run()
+    from .workflows import run_workflow
+
+    run_workflow("console", client)
+
 
 @cli.command()
 @click.option(
     "--session",
     type=click.Path(exists=True, dir_okay=False, path_type=str),
-    help="Load a saved session state from a JSON file",
+    help="Load a saved session from a JSON file",
 )
-def console(session: str | None) -> None:
-    """Launch the high-density TUI workbench."""
-    from .tui import JSTDataApp
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=str),
+    help="Default path for session writes (unique name if omitted)",
+)
+def console(session: str | None, output: str | None) -> None:
+    """Launch the console workflow (alias for `jst workflow console`)."""
+    from .workflows import run_workflow
 
-    app = JSTDataApp(
-        client,
-        session_path=session,
-    )
-    app.run()
+    run_workflow("console", client, session_path=session, output_path=output)
+
+
+@cli.group()
+def workflow():
+    """Launch analytical workflow TUIs."""
+
+
+@workflow.command("list")
+def workflow_list() -> None:
+    """List available workflows."""
+    from .workflows import list_workflows
+
+    specs = list_workflows()
+    if not specs:
+        click.echo("No workflows registered.")
+        return
+    for spec in specs:
+        click.echo(f"{spec.id:16} {spec.name} — {spec.description}")
+
+
+@workflow.command("console")
+@click.option(
+    "--session",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Load a saved session from a JSON file",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=str),
+    help="Default path for session writes (unique name if omitted)",
+)
+def workflow_console(session: str | None, output: str | None) -> None:
+    """General-purpose session editor."""
+    from .workflows import run_workflow
+
+    run_workflow("console", client, session_path=session, output_path=output)
 
 if __name__ == "__main__":
     try:
