@@ -1,35 +1,23 @@
-"""Console workflow — general-purpose session editor TUI."""
+"""Console step — general-purpose session editor TUI."""
 
 from __future__ import annotations
 
-from typing import Optional
-
-from ..client import JSTDataClient
-from .base import WorkflowSpec, register
+from .base import StepSpec, register
 
 
-def launch_console(
-    client: JSTDataClient,
-    session_path: Optional[str] = None,
-    output_path: Optional[str] = None,
-) -> None:
-    """Launch the console workflow TUI."""
-    from ..tui import JSTDataApp
+def create_console_screen(client, session, basket, **kwargs):
+    from ..tui import WorkspaceScreen
 
-    app = JSTDataApp(
-        client,
-        session_path=session_path,
-        output_path=output_path,
-        workflow_id="console",
-    )
-    app.run()
+    return WorkspaceScreen(client, session, basket)
 
 
 CONSOLE = register(
-    WorkflowSpec(
+    StepSpec(
         id="console",
         name="Console",
-        description="General-purpose session editor",
-        launch=launch_console,
+        description="General-purpose session editor. Search metrics, entities, and series; stage a basket; inspect metadata.",
+        create_screen=create_console_screen,
+        arguments=(),
+        example="jst run console",
     )
 )

@@ -1,28 +1,40 @@
-"""Analytical workflow TUIs.
+"""Interactive steps composed on the shell.
 
-Every workflow is a TUI that transforms a Session, launched via::
+::
 
-    jst workflow <name> [--session PATH] [--output PATH]
-
-Shared across workflows:
-- preload a session or start empty
-- explicit save (never auto-write)
-- identical offramp modal (Python / CLI / write session)
+    jst steps
+    jst step console
+    jst run console
+    jst run console : console
 """
 
 from .base import (
-    WorkflowSpec,
+    PipelineError,
+    ResolvedStep,
+    StepArgument,
+    StepSpec,
     default_session_path,
-    get_workflow,
-    list_workflows,
-    run_workflow,
+    format_step_help,
+    get_step,
+    list_steps,
+    parse_step_kwargs,
+    resolve_pipeline,
+    run_pipeline,
+    split_pipeline,
 )
 from . import console as _console  # noqa: F401  — registers console
 
 __all__ = [
-    "WorkflowSpec",
+    "PipelineError",
+    "ResolvedStep",
+    "StepArgument",
+    "StepSpec",
     "default_session_path",
-    "get_workflow",
-    "list_workflows",
-    "run_workflow",
+    "format_step_help",
+    "get_step",
+    "list_steps",
+    "parse_step_kwargs",
+    "resolve_pipeline",
+    "run_pipeline",
+    "split_pipeline",
 ]

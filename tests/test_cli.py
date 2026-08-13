@@ -106,3 +106,59 @@ def test_query_fuzzy_resolution(runner, mock_url):
         # Verify that the query was called with resolved IDs
         assert m.request_history[-1].qs["metric"] == ["cpi"]
         assert m.request_history[-1].qs["entity"] == ["usa"]
+
+
+def test_steps_list(runner):
+    result = runner.invoke(cli, ["steps"])
+    assert result.exit_code == 0
+    assert "console" in result.output
+
+
+def test_steps_json(runner):
+    import json
+
+    result = runner.invoke(cli, ["steps", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert any(s["id"] == "console" for s in data)
+
+
+def test_step_help(runner):
+    result = runner.invoke(cli, ["step", "console"])
+    assert result.exit_code == 0
+    assert "Console" in result.output
+    assert "jst run console" in result.output
+
+
+def test_step_json(runner):
+    import json
+
+    result = runner.invoke(cli, ["step", "console", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["id"] == "console"
+    assert data["arguments"] == []
+
+
+def test_step_unknown(runner):
+    result = runner.invoke(cli, ["step", "nope"])
+    assert result.exit_code == 1
+    assert "Unknown step" in result.output
+
+
+def test_run_unknown_step(runner):
+    result = runner.invoke(cli, ["run", "not-a-step"])
+    assert result.exit_code == 1
+    assert "Unknown step" in result.output
+
+
+def test_run_unknown_flag(runner):
+    result = runner.invoke(cli, ["run", "console", "--industry", "x"])
+    assert result.exit_code == 2
+    assert "Unknown option" in result.output
+
+
+def test_run_trailing_colon(runner):
+    result = runner.invoke(cli, ["run", "console", ":"])
+    assert result.exit_code == 2
+    assert "Trailing" in result.output

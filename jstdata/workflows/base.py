@@ -1,31 +1,86 @@
-"""Workflow registry and shared launch helpers."""
+"""Step catalog, pipeline parsing, and shared session helpers.
+
+The shell is the composition language::
+
+    jst run STEP [ARGS...] : STEP [ARGS...] : ...
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Sequence
 
 from ..client import JSTDataClient
 from ..session import Session
 
-LaunchFn = Callable[[JSTDataClient, Optional[str], Optional[str]], None]
+# (client, session, basket, **kwargs) -> textual.screen.Screen
+CreateScreenFn = Callable[..., Any]
 
 
 @dataclass(frozen=True)
-class WorkflowSpec:
-    """Metadata + launcher for a workflow TUI."""
+class StepArgument:
+    """One CLI flag that seeds a step's TUI (does not reproduce the UI)."""
+
+    name: str
+    type: str
+    description: str
+    required: bool = False
+    default: Any = None
+    choices: Optional[tuple[str, ...]] = None
+
+    def flag(self) -> str:
+        return "--" + self.name.replace("_", "-")
+
+    def to_dict(self) -> dict[str, Any]:
+        data = {
+            "name": self.name,
+            "flag": self.flag(),
+            "type": self.type,
+            "description": self.description,
+            "required": self.required,
+            "default": self.default,
+        }
+        if self.choices is not None:
+            data["choices"] = list(self.choices)
+        return data
+
+
+@dataclass(frozen=True)
+class StepSpec:
+    """Self-describing interactive step. Catalog + host plug into this."""
 
     id: str
     name: str
     description: str
-    launch: LaunchFn
+    create_screen: CreateScreenFn
+    arguments: tuple[StepArgument, ...] = ()
+    example: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "arguments": [a.to_dict() for a in self.arguments],
+            "example": self.example or f"jst run {self.id}",
+        }
 
 
-def default_session_path(workflow_id: str = "session") -> str:
+@dataclass(frozen=True)
+class ResolvedStep:
+    """A catalog step plus parsed kwargs from the shell pipeline."""
+
+    spec: StepSpec
+    kwargs: dict[str, Any]
+
+
+def default_session_path(prefix: str = "session") -> str:
     """Unique-by-default session filename to avoid write conflicts."""
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return f"{workflow_id}-{stamp}.json"
+    safe = prefix.replace(":", "-") or "session"
+    return f"{safe}-{stamp}.json"
 
 
 def apply_loaded_session(target: Session, loaded: Session) -> None:
@@ -48,36 +103,173 @@ def load_session_or_empty(path: Optional[str]) -> Session:
     return Session.load(path)
 
 
-_REGISTRY: Dict[str, WorkflowSpec] = {}
+_REGISTRY: Dict[str, StepSpec] = {}
 
 
-def register(spec: WorkflowSpec) -> WorkflowSpec:
-    """Register a workflow (idempotent by id)."""
+def register(spec: StepSpec) -> StepSpec:
+    """Register a step (idempotent by id)."""
     _REGISTRY[spec.id] = spec
     return spec
 
 
-def get_workflow(workflow_id: str) -> WorkflowSpec:
+def get_step(step_id: str) -> StepSpec:
     try:
-        return _REGISTRY[workflow_id]
+        return _REGISTRY[step_id]
     except KeyError as exc:
         known = ", ".join(sorted(_REGISTRY)) or "(none)"
-        raise KeyError(
-            f"Unknown workflow {workflow_id!r}. Available: {known}"
-        ) from exc
+        raise KeyError(f"Unknown step {step_id!r}. Available: {known}") from exc
 
 
-def list_workflows() -> list[WorkflowSpec]:
-    return [ _REGISTRY[k] for k in sorted(_REGISTRY) ]
+def list_steps() -> list[StepSpec]:
+    return [_REGISTRY[k] for k in sorted(_REGISTRY)]
 
 
-def run_workflow(
-    workflow_id: str,
+class PipelineError(ValueError):
+    """Invalid ``jst run`` pipeline."""
+
+
+def split_pipeline(tokens: Sequence[str]) -> list[list[str]]:
+    """Split argv on standalone ``:`` into per-step token groups."""
+    if not tokens:
+        raise PipelineError("No steps given. Example: jst run console")
+
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    for tok in tokens:
+        if tok == ":":
+            if not current:
+                raise PipelineError("Empty step in pipeline (stray ':').")
+            chunks.append(current)
+            current = []
+        else:
+            current.append(tok)
+    if not current:
+        raise PipelineError("Trailing ':' with no step.")
+    chunks.append(current)
+    return chunks
+
+
+def _coerce(arg: StepArgument, raw: str) -> Any:
+    if arg.choices is not None and raw not in arg.choices:
+        allowed = ", ".join(arg.choices)
+        raise PipelineError(
+            f"Invalid value {raw!r} for {arg.flag()}. Choices: {allowed}"
+        )
+    if arg.type in ("integer", "int"):
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise PipelineError(f"{arg.flag()} expects an integer, got {raw!r}") from exc
+    if arg.type in ("boolean", "bool"):
+        lowered = raw.lower()
+        if lowered in ("1", "true", "yes"):
+            return True
+        if lowered in ("0", "false", "no"):
+            return False
+        raise PipelineError(f"{arg.flag()} expects a boolean, got {raw!r}")
+    return raw
+
+
+def parse_step_kwargs(spec: StepSpec, tokens: Sequence[str]) -> dict[str, Any]:
+    """Parse a step's flag tokens against its declared arguments."""
+    by_flag = {a.flag(): a for a in spec.arguments}
+    kwargs: dict[str, Any] = {}
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        flag = tok
+        inline: Optional[str] = None
+        if tok.startswith("--") and "=" in tok:
+            flag, inline = tok.split("=", 1)
+        arg = by_flag.get(flag)
+        if arg is None:
+            raise PipelineError(
+                f"Unknown option {flag} for step {spec.id!r}. See: jst step {spec.id}"
+            )
+        if arg.type in ("boolean", "bool") and inline is None:
+            kwargs[arg.name] = True
+            i += 1
+            continue
+        if inline is not None:
+            kwargs[arg.name] = _coerce(arg, inline)
+            i += 1
+            continue
+        if i + 1 >= len(tokens):
+            raise PipelineError(f"{flag} requires a value.")
+        kwargs[arg.name] = _coerce(arg, tokens[i + 1])
+        i += 2
+
+    for arg in spec.arguments:
+        if arg.name in kwargs:
+            continue
+        if arg.required:
+            raise PipelineError(
+                f"Step {spec.id!r} requires {arg.flag()}. See: jst step {spec.id}"
+            )
+        if arg.default is not None:
+            kwargs[arg.name] = arg.default
+    return kwargs
+
+
+def resolve_pipeline(tokens: Sequence[str]) -> list[ResolvedStep]:
+    """Turn raw ``jst run`` tokens into catalog steps + kwargs."""
+    resolved: list[ResolvedStep] = []
+    for chunk in split_pipeline(tokens):
+        step_id, *rest = chunk
+        spec = get_step(step_id)
+        kwargs = parse_step_kwargs(spec, rest)
+        resolved.append(ResolvedStep(spec=spec, kwargs=kwargs))
+    return resolved
+
+
+def format_step_help(spec: StepSpec) -> str:
+    """Human-readable ``jst step <id>`` text."""
+    lines = [
+        spec.name,
+        "",
+        spec.description,
+        "",
+        "Options:",
+    ]
+    if spec.arguments:
+        for arg in spec.arguments:
+            req = " (required)" if arg.required else ""
+            default = f"  [default: {arg.default}]" if arg.default is not None else ""
+            lines.append(f"  {arg.flag()} {arg.type.upper()}{req}{default}")
+            lines.append(f"      {arg.description}")
+            if arg.choices:
+                lines.append(f"      Choices: {', '.join(arg.choices)}")
+            lines.append("")
+    else:
+        lines.append("  (none)")
+        lines.append("")
+
+    lines.append("Example:")
+    lines.append(f"  {spec.example or f'jst run {spec.id}'}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def run_pipeline(
     client: JSTDataClient,
+    tokens: Sequence[str],
     *,
     session_path: Optional[str] = None,
     output_path: Optional[str] = None,
 ) -> None:
-    """Launch a registered workflow TUI."""
-    spec = get_workflow(workflow_id)
-    spec.launch(client, session_path, output_path)
+    """Launch the host over a resolved step pipeline."""
+    resolved = resolve_pipeline(tokens)
+    from ..tui import WorkflowHost
+
+    app = WorkflowHost(
+        client,
+        resolved,
+        session_path=session_path,
+        output_path=output_path,
+    )
+    app.run()
+
+
+# Back-compat aliases used during the workflow → step rename
+WorkflowSpec = StepSpec
+get_workflow = get_step
+list_workflows = list_steps

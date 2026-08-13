@@ -227,68 +227,85 @@ def query(metric, entity, series, frequency, start_date, end_date, start_time, e
     
     format_and_print(results, format)
 
-@cli.command()
-def tui():
-    """
-    Launch the interactive TUI workbench (alias for `jst workflow console`).
-    """
-    from .workflows import run_workflow
+@cli.command("steps")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable catalog")
+def steps_cmd(as_json: bool) -> None:
+    """List available investigation steps."""
+    import json as json_lib
 
-    run_workflow("console", client)
+    from .workflows import list_steps
 
-
-@cli.command()
-@click.option(
-    "--session",
-    type=click.Path(exists=True, dir_okay=False, path_type=str),
-    help="Load a saved session from a JSON file",
-)
-@click.option(
-    "--output",
-    type=click.Path(dir_okay=False, path_type=str),
-    help="Default path for session writes (unique name if omitted)",
-)
-def console(session: str | None, output: str | None) -> None:
-    """Launch the console workflow (alias for `jst workflow console`)."""
-    from .workflows import run_workflow
-
-    run_workflow("console", client, session_path=session, output_path=output)
-
-
-@cli.group()
-def workflow():
-    """Launch analytical workflow TUIs."""
-
-
-@workflow.command("list")
-def workflow_list() -> None:
-    """List available workflows."""
-    from .workflows import list_workflows
-
-    specs = list_workflows()
+    specs = list_steps()
+    if as_json:
+        click.echo(json_lib.dumps([s.to_dict() for s in specs], indent=2))
+        return
     if not specs:
-        click.echo("No workflows registered.")
+        click.echo("No steps registered.")
         return
     for spec in specs:
-        click.echo(f"{spec.id:16} {spec.name} — {spec.description}")
+        click.echo(f"{spec.id:20} {spec.name} — {spec.description}")
 
 
-@workflow.command("console")
+@cli.command("step")
+@click.argument("step_id")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable step metadata")
+def step_cmd(step_id: str, as_json: bool) -> None:
+    """Describe a step: arguments, requirements, example."""
+    import json as json_lib
+
+    from .workflows import format_step_help, get_step
+
+    try:
+        spec = get_step(step_id)
+    except KeyError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    if as_json:
+        click.echo(json_lib.dumps(spec.to_dict(), indent=2))
+        return
+    click.echo(format_step_help(spec), nl=False)
+
+
+@cli.command(
+    "run",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "allow_interspersed_args": False,
+    },
+)
 @click.option(
     "--session",
     type=click.Path(exists=True, dir_okay=False, path_type=str),
-    help="Load a saved session from a JSON file",
+    help="Preload a session JSON into the pipeline",
 )
 @click.option(
     "--output",
     type=click.Path(dir_okay=False, path_type=str),
-    help="Default path for session writes (unique name if omitted)",
+    help="Default path for offramp session writes",
 )
-def workflow_console(session: str | None, output: str | None) -> None:
-    """General-purpose session editor."""
-    from .workflows import run_workflow
+@click.pass_context
+def run_cmd(ctx: click.Context, session: str | None, output: str | None) -> None:
+    """Run one or more steps, daisy-chained with ':'
 
-    run_workflow("console", client, session_path=session, output_path=output)
+    \b
+    jst run console
+    jst run --session in.json console : console
+    jst run company-selector --industry semiconductors : console
+    """
+    from .workflows import PipelineError, run_pipeline
+
+    if not ctx.args:
+        click.echo(ctx.get_help())
+        raise SystemExit(2)
+    try:
+        run_pipeline(client, ctx.args, session_path=session, output_path=output)
+    except KeyError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    except PipelineError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(2)
 
 if __name__ == "__main__":
     try:
