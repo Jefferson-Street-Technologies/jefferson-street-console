@@ -317,7 +317,7 @@ def run_pipeline(
 ) -> None:
     """Launch the host over a resolved step pipeline."""
     resolved = resolve_pipeline(tokens)
-    from ..tui import WorkflowHost
+    from .host import WorkflowHost
 
     app = WorkflowHost(
         client,

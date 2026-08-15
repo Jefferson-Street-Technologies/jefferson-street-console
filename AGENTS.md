@@ -22,7 +22,9 @@ Composition happens in the **shell**, not a custom DSL:
 jst run STEP [ARGS...] : STEP [ARGS...] : ...
 ```
 
-Catalog + parsing live in `jstdata/workflows/`. Registration is import-time (`register(StepSpec)`). The console is one step among many (`jstdata/workflows/console.py`).
+Catalog + parsing live in `jstdata/workflows/`. The host runtime is `workflows/host.py`;
+shared modals live beside it (`session_manager.py`, `find.py`, `export.py`). Steps register
+via import-time `register(StepSpec)` (e.g. `workflows/console.py`).
 
 ## Why steps matter
 
