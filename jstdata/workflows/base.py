@@ -48,6 +48,24 @@ class StepArgument:
 
 
 @dataclass(frozen=True)
+class StepBinding:
+    """One keybinding a step exposes to the host (help + introspection)."""
+
+    key: str
+    action: str
+    description: str
+    show_in_help: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "action": self.action,
+            "description": self.description,
+            "show_in_help": self.show_in_help,
+        }
+
+
+@dataclass(frozen=True)
 class StepSpec:
     """Self-describing interactive step. Catalog + host plug into this."""
 
@@ -56,6 +74,7 @@ class StepSpec:
     description: str
     create_screen: CreateScreenFn
     arguments: tuple[StepArgument, ...] = ()
+    bindings: tuple[StepBinding, ...] = ()
     example: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,6 +83,7 @@ class StepSpec:
             "name": self.name,
             "description": self.description,
             "arguments": [a.to_dict() for a in self.arguments],
+            "bindings": [b.to_dict() for b in self.bindings if b.show_in_help],
             "example": self.example or f"jst run {self.id}",
         }
 
@@ -240,6 +260,16 @@ def format_step_help(spec: StepSpec) -> str:
             if arg.choices:
                 lines.append(f"      Choices: {', '.join(arg.choices)}")
             lines.append("")
+    else:
+        lines.append("  (none)")
+        lines.append("")
+
+    lines.append("Keybindings:")
+    visible = [b for b in spec.bindings if b.show_in_help]
+    if visible:
+        for b in visible:
+            lines.append(f"  {b.key:<16} {b.description}")
+        lines.append("")
     else:
         lines.append("  (none)")
         lines.append("")

@@ -149,6 +149,7 @@ class SessionManagerModal(ModalScreen[None]):
         color: #888;
         height: 1;
         margin-top: 1;
+        dock: bottom;
     }
     """
 
@@ -156,8 +157,11 @@ class SessionManagerModal(ModalScreen[None]):
         Binding("escape", "dismiss", "Close"),
         Binding("i", "inspect", "Inspect"),
         Binding("backspace", "remove", "Remove"),
+        Binding("delete", "remove", "Remove", show=False),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
+        Binding("up", "cursor_up", "Up", show=False),
     ]
 
     def __init__(
@@ -183,7 +187,8 @@ class SessionManagerModal(ModalScreen[None]):
                     yield Label("INSPECT", classes="session-pane-header")
                     yield Static(_PLACEHOLDER, id="session-inspect-payload", markup=False)
             yield Label(
-                "[bold]i[/bold] inspect  //  [bold]backspace[/bold] remove  //  [bold]esc[/bold] close",
+                "[bold]i[/bold] inspect  //  [bold]backspace[/bold] remove  //  "
+                "[bold]j[/bold]/[bold]k[/bold] or [bold]↑[/bold]/[bold]↓[/bold]  //  [bold]esc[/bold] close",
                 id="session-mgr-hint",
                 markup=True,
             )

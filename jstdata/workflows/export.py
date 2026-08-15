@@ -59,12 +59,7 @@ class ExportModal(ModalScreen[None]):
         text-style: bold;
         color: #4ade80;
         width: 1fr;
-    }
-
-    #export-esc-hint {
-        color: #888;
-        width: auto;
-        text-align: right;
+        text-align: center;
     }
 
     .export-section {
@@ -90,6 +85,12 @@ class ExportModal(ModalScreen[None]):
     #export-path {
         width: 1fr;
     }
+
+    #export-hint {
+        color: #888;
+        height: 1;
+        margin-top: 1;
+    }
     """
 
     BINDINGS = [
@@ -107,7 +108,6 @@ class ExportModal(ModalScreen[None]):
         with Vertical(id="export-container"):
             with Horizontal(id="export-header"):
                 yield Label("EXPORT // TAKE IT WITH YOU", id="export-title")
-                yield Label("<Esc> to Exit", id="export-esc-hint")
 
             yield Label("PYTHON", classes="export-section")
             yield Static(self.python_code, classes="export-code", id="export-python")
@@ -125,6 +125,12 @@ class ExportModal(ModalScreen[None]):
                     id="export-path",
                 )
                 yield Button("WRITE", id="export-write", variant="success")
+
+            yield Label(
+                "[bold]tab[/bold] move  //  [bold]enter[/bold] activate  //  [bold]esc[/bold] close",
+                id="export-hint",
+                markup=True,
+            )
 
     @on(Button.Pressed, "#export-copy-python")
     def copy_python(self) -> None:

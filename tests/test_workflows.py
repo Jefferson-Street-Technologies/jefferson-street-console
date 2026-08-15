@@ -29,6 +29,15 @@ def test_console_is_registered():
     console = get_step("console")
     assert console.name == "Console"
     assert console.to_dict()["example"] == "jst run console"
+    assert any(b["key"] == "i" for b in console.to_dict()["bindings"])
+
+
+def test_format_step_help_console():
+    text = format_step_help(get_step("console"))
+    assert "Console" in text
+    assert "jst run console" in text
+    assert "Keybindings:" in text
+    assert "inspect" in text.lower()
 
 
 def test_default_session_path_is_well_formed():
@@ -128,9 +137,3 @@ def test_parse_step_kwargs():
 def test_console_rejects_unknown_flags():
     with pytest.raises(PipelineError, match="Unknown option"):
         resolve_pipeline(["console", "--industry", "x"])
-
-
-def test_format_step_help_console():
-    text = format_step_help(get_step("console"))
-    assert "Console" in text
-    assert "jst run console" in text

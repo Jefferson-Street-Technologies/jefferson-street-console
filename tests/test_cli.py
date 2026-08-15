@@ -138,6 +138,7 @@ def test_step_json(runner):
     data = json.loads(result.output)
     assert data["id"] == "console"
     assert data["arguments"] == []
+    assert any(b["key"] == "i" for b in data["bindings"])
 
 
 def test_step_unknown(runner):

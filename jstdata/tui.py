@@ -5,7 +5,6 @@ from textual.screen import Screen, ModalScreen
 from textual.binding import Binding
 from textual import on, work
 import asyncio
-import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, TypeAlias
@@ -15,7 +14,6 @@ from .models import Series, Entity, Metric, EntityRelationship, Resource as ApiR
 from .session import Session
 from .workflows.base import (
     ResolvedStep,
-    apply_loaded_session,
     default_session_path,
     load_session_or_empty,
 )
@@ -117,7 +115,6 @@ class WorkspaceScreen(Screen):
         Binding("i", "inspect", "Inspect"),
         Binding("j", "cursor_down", "Cursor Down", show=False),
         Binding("k", "cursor_up", "Cursor Up", show=False),
-        Binding("l", "load_session", "Load Session"),
     ]
 
     def __init__(
@@ -181,23 +178,11 @@ class WorkspaceScreen(Screen):
             f"{step_id} {i}/{n}",
             "[bold]s[/bold] session",
             "[bold]e[/bold] export",
+            "[bold]n[/bold]/[bold]p[/bold]",
             "[bold]q[/bold] quit",
+            "[bold]?[/bold]",
         ]
-        if n > 1:
-            parts.insert(1, "[bold]ctrl+n[/bold] next // [bold]ctrl+p[/bold] prev")
         self.query_one("#help-hint").update(" // ".join(parts))
-
-    def load_session(self, filepath: str) -> None:
-        """Load a session from JSON and refresh the staging basket."""
-        try:
-            loaded = Session.load(filepath)
-            apply_loaded_session(self.session, loaded)
-            self._hydrate_basket_from_session()
-            self.notify(f"Loaded {len(self.session.resource_ids())} items from session")
-        except FileNotFoundError:
-            self.notify(f"Session file not found: {filepath}", severity="error")
-        except json.JSONDecodeError as e:
-            self.notify(f"Invalid JSON in session file: {e}", severity="error")
 
     def _hydrate_basket_from_session(self) -> None:
         """Rebuild the display basket from session IDs (labels via API)."""
@@ -225,24 +210,12 @@ class WorkspaceScreen(Screen):
                 )
             )
 
-    def _load_session_result(self, filepath: str | None) -> None:
-        if filepath:
-            self.load_session(filepath)
-
     def action_inspect(self) -> None:
         """Fetch deep details for highlighted item."""
         list_view = self.query_one("#results-list", ListView)
         if list_view.highlighted_child:
             resource = list_view.highlighted_child.resource
             self._start_inspector_search(resource)
-
-    def action_load_session(self) -> None:
-        """Load session from a prompt file."""
-        default = getattr(self.app, "output_path", "session.json")
-        self.app.push_screen(
-            PathPromptModal("Load session from file:", "session.json", default=default),
-            self._load_session_result,
-        )
 
     def action_cursor_down(self) -> None:
         """Move cursor/highlight down in the currently focused list or component."""
@@ -456,8 +429,8 @@ class WorkspaceScreen(Screen):
             self.notify(f"Error adding to basket: {e}", severity="error")
 
 class HelpScreen(ModalScreen):
-    """A modal screen showing keybindings help."""
-    
+    """Step-specific keybindings from the current StepSpec."""
+
     DEFAULT_CSS = """
     HelpScreen {
         align: center middle;
@@ -465,8 +438,9 @@ class HelpScreen(ModalScreen):
     }
 
     #help-container {
-        width: 50;
+        width: 60;
         height: auto;
+        max-height: 90%;
         border: thick #4ade80;
         background: #111111;
         padding: 1 2;
@@ -479,118 +453,68 @@ class HelpScreen(ModalScreen):
         text-align: center;
     }
 
+    #help-note {
+        color: #888;
+        margin-bottom: 1;
+        text-align: center;
+    }
+
     .key-row {
-        height: 1;
+        height: auto;
         margin-bottom: 0;
     }
 
     .key-col {
         color: #4ade80;
         text-style: bold;
-        width: 15;
+        width: 16;
     }
 
     .desc-col {
         color: #e0e0e0;
-        width: 30;
+        width: 1fr;
     }
 
-    #help-close-btn {
+    #help-footer {
+        color: #888;
         margin-top: 1;
-        width: 100%;
+        height: 1;
     }
     """
 
     BINDINGS = [
-        ("escape", "dismiss", "Dismiss"),
+        Binding("escape", "dismiss", "Close"),
+        Binding("question_mark", "dismiss", "Close", show=False),
     ]
+
+    def __init__(self, step_name: str, bindings: list) -> None:
+        super().__init__()
+        self.step_name = step_name
+        self.step_bindings = bindings
 
     def compose(self) -> ComposeResult:
         with Vertical(id="help-container"):
-            yield Label("KEYBINDINGS // HELPMENU", id="help-title")
-            
-            yield Horizontal(Label("q / ctrl+c", classes="key-col"), Label("Quit application", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("s", classes="key-col"), Label("Session (remove / inspect)", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("e", classes="key-col"), Label("Export (Python / CLI / write)", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("ctrl+n", classes="key-col"), Label("Next step (if chained)", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("ctrl+p", classes="key-col"), Label("Previous step (if chained)", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("?", classes="key-col"), Label("Show this help menu", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("i", classes="key-col"), Label("Inspect related (console)", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("escape", classes="key-col"), Label("Back to workspace", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("enter (search)", classes="key-col"), Label("Focus search results", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("enter (results)", classes="key-col"), Label("Add item to basket", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("j / ↓", classes="key-col"), Label("Move highlight down", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("k / ↑", classes="key-col"), Label("Move highlight up", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("l", classes="key-col"), Label("Load session file", classes="desc-col"), classes="key-row")
-
-            yield Button("CLOSE (ESC)", variant="error", id="help-close-btn")
+            yield Label(f"{self.step_name.upper()} // KEYBINDINGS", id="help-title")
+            yield Label(
+                "Universal keys stay in the status bar (s/e/n/p/q).",
+                id="help-note",
+            )
+            if not self.step_bindings:
+                yield Label("(no step-specific bindings)", classes="desc-col")
+            else:
+                for b in self.step_bindings:
+                    if not getattr(b, "show_in_help", True):
+                        continue
+                    yield Horizontal(
+                        Label(b.key, classes="key-col"),
+                        Label(b.description, classes="desc-col"),
+                        classes="key-row",
+                    )
+            yield Label("[bold]esc[/bold] / [bold]?[/bold] close", id="help-footer", markup=True)
 
     def action_dismiss(self) -> None:
         self.dismiss()
 
-class PathPromptModal(ModalScreen[str | None]):
-    """Modal for prompting a filesystem path (e.g. load session)."""
-    
-    DEFAULT_CSS = """
-    PathPromptModal {
-        align: center middle;
-        background: rgba(0, 0, 0, 0.7);
-    }
-
-    #session-container {
-        width: 60;
-        height: auto;
-        border: thick #4ade80;
-        background: #111111;
-        padding: 1 2;
-    }
-
-    #session-title {
-        text-style: bold;
-        color: #4ade80;
-        margin-bottom: 1;
-        text-align: center;
-    }
-
-    #session-input {
-        width: 1fr;
-        margin: 1 0;
-    }
-
-    #session-btn {
-        margin-top: 1;
-        width: 100%;
-    }
-    """
-
-    BINDINGS = [
-        ("escape", "dismiss", "Cancel"),
-        ("enter", "submit", "Submit"),
-    ]
-
-    def __init__(self, title: str, placeholder: str, default: str = ""):
-        super().__init__()
-        self.title = title
-        self.placeholder = placeholder
-        self.default = default
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="session-container"):
-            yield Label(self.title, id="session-title")
-            yield Input(placeholder=self.placeholder, id="session-input", value=self.default)
-            yield Button("OK", variant="primary", id="session-btn")
-
-    @on(Button.Pressed, "#session-btn")
-    def submit_button(self) -> None:
-        self.action_submit()
-
-    def action_submit(self) -> None:
-        input_widget = self.query_one("#session-input", Input)
-        if input_widget.value.strip():
-            self.dismiss(input_widget.value.strip())
-
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
 
 # --- Main App ---
 
@@ -716,11 +640,11 @@ class WorkflowHost(App):
         Binding("q", "quit", "Quit"),
         Binding("ctrl+c", "quit", "Quit"),
         Binding("escape", "back", "Back"),
-        Binding("question_mark", "show_help", "Show Keybindings", key_display="?"),
+        Binding("question_mark", "show_help", "Step help", key_display="?"),
         Binding("s", "session", "Session"),
         Binding("e", "export", "Export"),
-        Binding("ctrl+n", "next_step", "Next"),
-        Binding("ctrl+p", "prev_step", "Prev"),
+        Binding("n", "next_step", "Next"),
+        Binding("p", "prev_step", "Prev"),
     ]
 
     def __init__(
@@ -748,6 +672,17 @@ class WorkflowHost(App):
     @property
     def current_step_id(self) -> str:
         return self.steps[self.step_index].spec.id
+
+    @property
+    def current_step_spec(self):
+        return self.steps[self.step_index].spec
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # Let printable host keys fall through to focused Inputs (search, path, etc.).
+        if action in {"session", "export", "next_step", "prev_step", "show_help"}:
+            if isinstance(self.focused, Input):
+                return False
+        return True
 
     def on_mount(self) -> None:
         self._push_current_step()
@@ -808,8 +743,9 @@ class WorkflowHost(App):
                 self.screen.query_one("#search-input", Input).focus()
 
     def action_show_help(self) -> None:
-        """Show the keybindings help screen."""
-        self.push_screen(HelpScreen())
+        """Show step-specific keybindings from the current StepSpec."""
+        spec = self.current_step_spec
+        self.push_screen(HelpScreen(spec.name, list(spec.bindings)))
 
 # Back-compat alias
 JSTDataApp = WorkflowHost
