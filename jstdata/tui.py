@@ -18,6 +18,7 @@ from .workflows.base import (
     load_session_or_empty,
 )
 from .workflows.export import ExportModal
+from .workflows.find import FindModal
 from .workflows.session_manager import SessionManagerModal
 
 Resource: TypeAlias = Series | Entity | Metric | ApiResource
@@ -147,6 +148,7 @@ class WorkspaceScreen(Screen):
         parts = [
             f"{step_id} {i}/{n}",
             "[bold]s[/bold] session",
+            "[bold]f[/bold] find",
             "[bold]e[/bold] export",
             "[bold]n[/bold]/[bold]p[/bold]",
             "[bold]q[/bold] quit",
@@ -446,7 +448,7 @@ class HelpScreen(ModalScreen):
         with Vertical(id="help-container"):
             yield Label(f"{self.step_name.upper()} // KEYBINDINGS", id="help-title")
             yield Label(
-                "Universal keys stay in the status bar (s/e/n/p/q).",
+                "Universal keys stay in the status bar (s/f/e/n/p/q).",
                 id="help-note",
             )
             if not self.step_bindings:
@@ -592,6 +594,7 @@ class WorkflowHost(App):
         Binding("escape", "back", "Back"),
         Binding("question_mark", "show_help", "Step help", key_display="?"),
         Binding("s", "session", "Session"),
+        Binding("f", "find", "Find"),
         Binding("e", "export", "Export"),
         Binding("n", "next_step", "Next"),
         Binding("p", "prev_step", "Prev"),
@@ -634,7 +637,7 @@ class WorkflowHost(App):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         # Let printable host keys fall through to focused Inputs (search, path, etc.).
-        if action in {"session", "export", "next_step", "prev_step", "show_help"}:
+        if action in {"session", "find", "export", "next_step", "prev_step", "show_help"}:
             if isinstance(self.focused, Input):
                 return False
         return True
@@ -679,6 +682,10 @@ class WorkflowHost(App):
         self.push_screen(
             SessionManagerModal(self.client, self.session, self.labels)
         )
+
+    def action_find(self) -> None:
+        """Shared find: search catalog and add resources to the session."""
+        self.push_screen(FindModal(self.client, self.session))
 
     def action_export(self) -> None:
         """Shared export: copy Python/CLI or write session file."""
