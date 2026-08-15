@@ -6,7 +6,6 @@ from textual.binding import Binding
 from textual import on, work
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
 from typing import Any, TypeAlias
 
 from .client import JSTDataClient
@@ -15,6 +14,7 @@ from .session import Session
 from .workflows.base import (
     ResolvedStep,
     default_session_path,
+    hydrate_labels,
     load_session_or_empty,
 )
 from .workflows.export import ExportModal
@@ -43,32 +43,6 @@ class SearchResultRow(ListItem):
             Label(f"{source[:10]:<10}", classes="col-src"),
             Label(f"{res_type:<10}", classes="col-type"),
         )
-
-class BasketHeader(ListItem):
-    """A header in the staging basket list (legacy)."""
-    def __init__(self, title: str):
-        super().__init__(disabled=True)
-        self.title = title
-
-    def compose(self) -> ComposeResult:
-        yield Label(self.title, classes="basket-header-label")
-
-class BasketItem(ListItem):
-    """An item in the staging basket (legacy)."""
-    def __init__(self, resource: Resource):
-        super().__init__()
-        self.resource = resource
-
-    def compose(self) -> ComposeResult:
-        res = self.resource
-        name = getattr(res, "label", getattr(res, "name", "Unknown"))
-        subtext = f"{getattr(res, 'source', 'API')} // {getattr(res, 'frequency', 'DATA')}"
-        
-        with Horizontal():
-            with Vertical():
-                yield Label(f"[bold]{name}[/bold]", classes="basket-item-name")
-                yield Label(subtext, classes="basket-item-subtext")
-            yield Button("X", variant="error", classes="remove-btn")
 
 class InspectorResultRow(ListItem):
     """A row in the inspector results list."""
@@ -121,12 +95,10 @@ class WorkspaceScreen(Screen):
         self,
         client: JSTDataClient,
         session: Session,
-        basket: list[Resource],
     ) -> None:
         super().__init__()
         self.client = client
         self.session = session
-        self.basket = basket
 
         self.search_task: asyncio.Task[None] | None = None
         self.inspector_search_task: asyncio.Task[None] | None = None
@@ -165,8 +137,6 @@ class WorkspaceScreen(Screen):
 
     def on_mount(self) -> None:
         self.query_one("#search-input").focus()
-        if self.session.resource_ids() and not self.basket:
-            self._hydrate_basket_from_session()
         self._refresh_help_hint()
 
     def _refresh_help_hint(self) -> None:
@@ -183,32 +153,6 @@ class WorkspaceScreen(Screen):
             "[bold]?[/bold]",
         ]
         self.query_one("#help-hint").update(" // ".join(parts))
-
-    def _hydrate_basket_from_session(self) -> None:
-        """Rebuild the display basket from session IDs (labels via API)."""
-        self.basket.clear()
-        ids = self.session.resource_ids()
-        if not ids:
-            return
-
-        labels = {r.id: r.label for r in self.client.get_resources(ids)}
-        for mid in self.session.metric:
-            self.basket.append(Metric(id=mid, name=labels.get(mid, mid)))
-        for eid in self.session.entity:
-            self.basket.append(Entity(id=eid, label=labels.get(eid, eid)))
-        for sid in self.session.series:
-            self.basket.append(
-                Series(
-                    id=sid,
-                    label=labels.get(sid, sid),
-                    frequency="",
-                    source="",
-                    units="",
-                    seasonal_adjustment="",
-                    last_updated=datetime.min,
-                    metric_id="",
-                )
-            )
 
     def action_inspect(self) -> None:
         """Fetch deep details for highlighted item."""
@@ -256,24 +200,31 @@ class WorkspaceScreen(Screen):
         self.query_one("#results-list", ListView).focus()
 
     @on(ListView.Selected, "#results-list")
-    def add_to_basket(self, event: ListView.Selected) -> None:
+    def add_to_session(self, event: ListView.Selected) -> None:
         resource = event.item.resource
         if not self._add_resource_to_session(resource):
+            self.notify(f"{resource.id} is already in session", severity="warning")
             return
-        self.basket.append(resource)
-        self.notify("Added to basket")
+        self.notify("Added to session")
+
+    def _resource_label(self, resource: Resource) -> str:
+        return getattr(resource, "label", None) or getattr(resource, "name", None) or resource.id
 
     def _add_resource_to_session(self, resource: Resource) -> bool:
         """Update the session for a newly staged resource. Returns False if duplicate."""
         if isinstance(resource, Metric):
-            return self.session.add_metric(resource.id)
-        if isinstance(resource, Entity):
-            return self.session.add_entity(resource.id)
-        if isinstance(resource, Series):
-            return self.session.add_series(resource.id)
-        if resource.id in self.session.resource_ids():
+            added = self.session.add_metric(resource.id)
+        elif isinstance(resource, Entity):
+            added = self.session.add_entity(resource.id)
+        elif isinstance(resource, Series):
+            added = self.session.add_series(resource.id)
+        elif resource.id in self.session.resource_ids():
             return False
-        return self.session.add_series(resource.id)
+        else:
+            added = self.session.add_series(resource.id)
+        if added:
+            self.app.remember_label(resource.id, self._resource_label(resource))
+        return added
 
     def _start_inspector_search(self, resource: Any) -> None:
         """Switch view to inspector interactive search and begin prefetch."""
@@ -409,10 +360,10 @@ class WorkspaceScreen(Screen):
 
     @on(ListView.Selected, "#inspector-results-list")
     def on_inspector_item_selected(self, event: ListView.Selected) -> None:
-        self.add_inspector_item_to_basket(event.item.resource)
+        self.add_inspector_item_to_session(event.item.resource)
 
     @work(exclusive=True)
-    async def add_inspector_item_to_basket(self, item: Any) -> None:
+    async def add_inspector_item_to_session(self, item: Any) -> None:
         try:
             if isinstance(item, EntityRelationship):
                 resource = await asyncio.to_thread(self.client.get_entity, item.id)
@@ -421,12 +372,11 @@ class WorkspaceScreen(Screen):
             else:
                 return
             if not self._add_resource_to_session(resource):
-                self.notify(f"{resource.id} is already in basket", severity="warning")
+                self.notify(f"{resource.id} is already in session", severity="warning")
                 return
-            self.basket.append(resource)
-            self.notify(f"Added {resource.id} to basket")
+            self.notify(f"Added {resource.id} to session")
         except Exception as e:
-            self.notify(f"Error adding to basket: {e}", severity="error")
+            self.notify(f"Error adding to session: {e}", severity="error")
 
 class HelpScreen(ModalScreen):
     """Step-specific keybindings from the current StepSpec."""
@@ -663,7 +613,12 @@ class WorkflowHost(App):
         prefix = "-".join(s.spec.id for s in steps)
         self.output_path = output_path or default_session_path(prefix)
         self.session = load_session_or_empty(session_path)
-        self.basket: list[Resource] = []
+        self.labels: dict[str, str] = {}
+        hydrate_labels(self.client, self.session, self.labels)
+
+    def remember_label(self, resource_id: str, label: str) -> None:
+        """Cache a display label for UI (session remains source of truth)."""
+        self.labels[resource_id] = label or resource_id
 
     @property
     def step_count(self) -> int:
@@ -692,7 +647,6 @@ class WorkflowHost(App):
         return resolved.spec.create_screen(
             self.client,
             self.session,
-            self.basket,
             **resolved.kwargs,
         )
 
@@ -723,7 +677,7 @@ class WorkflowHost(App):
     def action_session(self) -> None:
         """Shared session manager: remove / inspect staged resources."""
         self.push_screen(
-            SessionManagerModal(self.client, self.session, self.basket)
+            SessionManagerModal(self.client, self.session, self.labels)
         )
 
     def action_export(self) -> None:

@@ -5,10 +5,10 @@ from __future__ import annotations
 from .base import StepBinding, StepSpec, register
 
 
-def create_console_screen(client, session, basket, **kwargs):
+def create_console_screen(client, session, **kwargs):
     from ..tui import WorkspaceScreen
 
-    return WorkspaceScreen(client, session, basket)
+    return WorkspaceScreen(client, session)
 
 
 CONSOLE = register(
@@ -17,7 +17,7 @@ CONSOLE = register(
         name="Console",
         description=(
             "General-purpose session editor. Search metrics, entities, and series; "
-            "stage a basket; inspect related metadata."
+            "stage resources; inspect related metadata."
         ),
         create_screen=create_console_screen,
         arguments=(),

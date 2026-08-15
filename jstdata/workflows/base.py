@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, Optional, Sequence
 from ..client import JSTDataClient
 from ..session import Session
 
-# (client, session, basket, **kwargs) -> textual.screen.Screen
+# (client, session, **kwargs) -> textual.screen.Screen
 CreateScreenFn = Callable[..., Any]
 
 
@@ -121,6 +121,35 @@ def load_session_or_empty(path: Optional[str]) -> Session:
     if not path:
         return Session()
     return Session.load(path)
+
+
+def resource_type_for_id(session: Session, resource_id: str) -> str:
+    """Return metric|entity|series for an id present in the session."""
+    if resource_id in session.metric:
+        return "metric"
+    if resource_id in session.entity:
+        return "entity"
+    if resource_id in session.series:
+        return "series"
+    return "series"
+
+
+def hydrate_labels(
+    client: JSTDataClient,
+    session: Session,
+    labels: dict[str, str],
+) -> None:
+    """Fill missing UI labels for session resource IDs (in-place)."""
+    missing = [rid for rid in session.resource_ids() if rid not in labels]
+    if not missing:
+        return
+    for resource in client.get_resources(missing):
+        labels[resource.id] = resource.label or resource.id
+
+
+def label_for(labels: dict[str, str], resource_id: str) -> str:
+    """Display name for a resource id; falls back to the id itself."""
+    return labels.get(resource_id, resource_id)
 
 
 _REGISTRY: Dict[str, StepSpec] = {}

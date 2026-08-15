@@ -13,10 +13,12 @@ from jstdata.workflows.base import (
     default_session_path,
     format_step_help,
     get_step,
+    label_for,
     list_steps,
     load_session_or_empty,
     parse_step_kwargs,
     resolve_pipeline,
+    resource_type_for_id,
     split_pipeline,
 )
 
@@ -132,6 +134,15 @@ def test_parse_step_kwargs():
         parse_step_kwargs(spec, ["--nope"])
     with pytest.raises(PipelineError, match="integer"):
         parse_step_kwargs(spec, ["--limit", "x"])
+
+
+def test_resource_type_and_label_helpers():
+    session = Session(metric=["gdp"], entity=["usa"], series=["s1"])
+    assert resource_type_for_id(session, "gdp") == "metric"
+    assert resource_type_for_id(session, "usa") == "entity"
+    assert resource_type_for_id(session, "s1") == "series"
+    assert label_for({"gdp": "GDP"}, "gdp") == "GDP"
+    assert label_for({}, "gdp") == "gdp"
 
 
 def test_console_rejects_unknown_flags():

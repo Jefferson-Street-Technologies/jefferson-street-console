@@ -14,36 +14,24 @@ from textual.screen import ModalScreen
 from textual.widgets import Label, ListItem, ListView, Static
 
 from ..client import JSTDataClient
-from ..models import Entity, Metric, Series
 from ..session import Session
+from .base import label_for
 
 _PLACEHOLDER = "Highlight an item and press i to inspect."
-
-
-def _resource_type(resource: Any) -> str:
-    if isinstance(resource, Series):
-        return "series"
-    if isinstance(resource, Entity):
-        return "entity"
-    if isinstance(resource, Metric):
-        return "metric"
-    return "series"
 
 
 class SessionResourceRow(ListItem):
     """One staged resource in the session list (single compact line)."""
 
-    def __init__(self, resource: Any) -> None:
+    def __init__(self, resource_id: str, resource_type: str, display_name: str) -> None:
         super().__init__()
-        self.resource = resource
-        self.resource_type = _resource_type(resource)
+        self.resource_id = resource_id
+        self.resource_type = resource_type
+        self.display_name = display_name
 
     def compose(self) -> ComposeResult:
-        name = getattr(self.resource, "label", getattr(self.resource, "name", "Unknown"))
-        rtype = self.resource_type.upper()
-        # One label keeps ListItem height stable across resizes.
         yield Label(
-            f"{rtype:<8} {name}  [{self.resource.id}]",
+            f"{self.resource_type.upper():<8} {self.display_name}  [{self.resource_id}]",
             classes="sess-row-label",
         )
 
@@ -168,12 +156,12 @@ class SessionManagerModal(ModalScreen[None]):
         self,
         client: JSTDataClient,
         session: Session,
-        basket: list[Any],
+        labels: dict[str, str],
     ) -> None:
         super().__init__()
         self.client = client
         self.session = session
-        self.basket = basket
+        self.labels = labels
         self._inspected_id: str | None = None
 
     def compose(self) -> ComposeResult:
@@ -197,17 +185,31 @@ class SessionManagerModal(ModalScreen[None]):
         self._rebuild_list()
         self.query_one("#session-resource-list", ListView).focus()
 
+    def _iter_session_entries(self) -> list[tuple[str, str]]:
+        """(resource_type, id) in stable metric → entity → series order."""
+        entries: list[tuple[str, str]] = []
+        for mid in self.session.metric:
+            entries.append(("metric", mid))
+        for eid in self.session.entity:
+            entries.append(("entity", eid))
+        for sid in self.session.series:
+            entries.append(("series", sid))
+        return entries
+
     def _rebuild_list(self) -> None:
         list_view = self.query_one("#session-resource-list", ListView)
         list_view.clear()
-        if not self.basket:
+        entries = self._iter_session_entries()
+        if not entries:
             list_view.append(
                 ListItem(Label("Session is empty", classes="sess-row-label"), disabled=True)
             )
             self._show_placeholder()
             return
-        for item in self.basket:
-            list_view.append(SessionResourceRow(item))
+        for rtype, rid in entries:
+            list_view.append(
+                SessionResourceRow(rid, rtype, label_for(self.labels, rid))
+            )
 
     def _show_placeholder(self) -> None:
         self._inspected_id = None
@@ -223,7 +225,7 @@ class SessionManagerModal(ModalScreen[None]):
     @on(ListView.Highlighted, "#session-resource-list")
     def on_highlight_changed(self, event: ListView.Highlighted) -> None:
         row = event.item if isinstance(event.item, SessionResourceRow) else None
-        if row is None or row.resource.id != self._inspected_id:
+        if row is None or row.resource_id != self._inspected_id:
             self._show_placeholder()
 
     def action_inspect(self) -> None:
@@ -232,7 +234,7 @@ class SessionManagerModal(ModalScreen[None]):
             self.notify("Select a resource to inspect", severity="warning")
             return
         self.query_one("#session-inspect-payload", Static).update("Fetching...")
-        self._fetch_payload(row.resource_type, row.resource.id)
+        self._fetch_payload(row.resource_type, row.resource_id)
 
     @work(exclusive=True)
     async def _fetch_payload(self, resource_type: str, resource_id: str) -> None:
@@ -256,13 +258,13 @@ class SessionManagerModal(ModalScreen[None]):
         self._remove_resource(row)
 
     def _remove_resource(self, row: SessionResourceRow) -> None:
-        resource = row.resource
-        self.session.remove_id(resource.id)
-        self.basket[:] = [i for i in self.basket if i.id != resource.id]
-        if self._inspected_id == resource.id:
+        rid = row.resource_id
+        self.session.remove_id(rid)
+        self.labels.pop(rid, None)
+        if self._inspected_id == rid:
             self._show_placeholder()
         self._rebuild_list()
-        self.notify(f"Removed {resource.id}")
+        self.notify(f"Removed {rid}")
         self.query_one("#session-resource-list", ListView).focus()
 
     def action_cursor_down(self) -> None:
