@@ -282,7 +282,7 @@ def step_cmd(step_id: str, as_json: bool) -> None:
 @click.option(
     "--output",
     type=click.Path(dir_okay=False, path_type=str),
-    help="Default path for offramp session writes",
+    help="Default path for export session writes",
 )
 @click.pass_context
 def run_cmd(ctx: click.Context, session: str | None, output: str | None) -> None:

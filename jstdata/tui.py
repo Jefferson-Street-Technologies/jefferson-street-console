@@ -19,7 +19,8 @@ from .workflows.base import (
     default_session_path,
     load_session_or_empty,
 )
-from .workflows.offramp import OfframpModal, copy_to_clipboard
+from .workflows.export import ExportModal
+from .workflows.session_manager import SessionManagerModal
 
 Resource: TypeAlias = Series | Entity | Metric | ApiResource
 InspectorResource: TypeAlias = Series | Entity | Metric | EntityRelationship
@@ -176,7 +177,12 @@ class WorkspaceScreen(Screen):
         n = getattr(app, "step_count", 1)
         i = getattr(app, "step_index", 0) + 1
         step_id = getattr(app, "current_step_id", "console")
-        parts = [f"{step_id} {i}/{n}", "[bold]o[/bold] offramp", "[bold]q[/bold] quit"]
+        parts = [
+            f"{step_id} {i}/{n}",
+            "[bold]s[/bold] session",
+            "[bold]e[/bold] export",
+            "[bold]q[/bold] quit",
+        ]
         if n > 1:
             parts.insert(1, "[bold]ctrl+n[/bold] next // [bold]ctrl+p[/bold] prev")
         self.query_one("#help-hint").update(" // ".join(parts))
@@ -234,7 +240,7 @@ class WorkspaceScreen(Screen):
         """Load session from a prompt file."""
         default = getattr(self.app, "output_path", "session.json")
         self.app.push_screen(
-            SessionModal("Load session from file:", "session.json", default=default),
+            PathPromptModal("Load session from file:", "session.json", default=default),
             self._load_session_result,
         )
 
@@ -504,28 +510,29 @@ class HelpScreen(ModalScreen):
             yield Label("KEYBINDINGS // HELPMENU", id="help-title")
             
             yield Horizontal(Label("q / ctrl+c", classes="key-col"), Label("Quit application", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("i", classes="key-col"), Label("Inspect selected item", classes="desc-col"), classes="key-row")
+            yield Horizontal(Label("s", classes="key-col"), Label("Session (remove / inspect)", classes="desc-col"), classes="key-row")
+            yield Horizontal(Label("e", classes="key-col"), Label("Export (Python / CLI / write)", classes="desc-col"), classes="key-row")
+            yield Horizontal(Label("ctrl+n", classes="key-col"), Label("Next step (if chained)", classes="desc-col"), classes="key-row")
+            yield Horizontal(Label("ctrl+p", classes="key-col"), Label("Previous step (if chained)", classes="desc-col"), classes="key-row")
+            yield Horizontal(Label("?", classes="key-col"), Label("Show this help menu", classes="desc-col"), classes="key-row")
+            yield Horizontal(Label("i", classes="key-col"), Label("Inspect related (console)", classes="desc-col"), classes="key-row")
             yield Horizontal(Label("escape", classes="key-col"), Label("Back to workspace", classes="desc-col"), classes="key-row")
             yield Horizontal(Label("enter (search)", classes="key-col"), Label("Focus search results", classes="desc-col"), classes="key-row")
             yield Horizontal(Label("enter (results)", classes="key-col"), Label("Add item to basket", classes="desc-col"), classes="key-row")
             yield Horizontal(Label("j / ↓", classes="key-col"), Label("Move highlight down", classes="desc-col"), classes="key-row")
             yield Horizontal(Label("k / ↑", classes="key-col"), Label("Move highlight up", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("?", classes="key-col"), Label("Show this help menu", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("o", classes="key-col"), Label("Offramp (Python / CLI / write)", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("ctrl+n", classes="key-col"), Label("Next step (if chained)", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("ctrl+p", classes="key-col"), Label("Previous step (if chained)", classes="desc-col"), classes="key-row")
-            yield Horizontal(Label("l", classes="key-col"), Label("Load session", classes="desc-col"), classes="key-row")
+            yield Horizontal(Label("l", classes="key-col"), Label("Load session file", classes="desc-col"), classes="key-row")
 
             yield Button("CLOSE (ESC)", variant="error", id="help-close-btn")
 
     def action_dismiss(self) -> None:
         self.dismiss()
 
-class SessionModal(ModalScreen[str | None]):
-    """Modal for saving/loading session files."""
+class PathPromptModal(ModalScreen[str | None]):
+    """Modal for prompting a filesystem path (e.g. load session)."""
     
     DEFAULT_CSS = """
-    SessionModal {
+    PathPromptModal {
         align: center middle;
         background: rgba(0, 0, 0, 0.7);
     }
@@ -710,7 +717,8 @@ class WorkflowHost(App):
         Binding("ctrl+c", "quit", "Quit"),
         Binding("escape", "back", "Back"),
         Binding("question_mark", "show_help", "Show Keybindings", key_display="?"),
-        Binding("o", "offramp", "Offramp"),
+        Binding("s", "session", "Session"),
+        Binding("e", "export", "Export"),
         Binding("ctrl+n", "next_step", "Next"),
         Binding("ctrl+p", "prev_step", "Prev"),
     ]
@@ -777,9 +785,15 @@ class WorkflowHost(App):
         self.step_index -= 1
         self.switch_screen(self._make_current_screen())
 
-    def action_offramp(self) -> None:
-        """Shared offramp: copy Python/CLI or write session."""
-        self.push_screen(OfframpModal(self.session, default_path=self.output_path, basket=self.basket))
+    def action_session(self) -> None:
+        """Shared session manager: remove / inspect staged resources."""
+        self.push_screen(
+            SessionManagerModal(self.client, self.session, self.basket)
+        )
+
+    def action_export(self) -> None:
+        """Shared export: copy Python/CLI or write session file."""
+        self.push_screen(ExportModal(self.session, default_path=self.output_path))
 
     def action_inspect(self) -> None:
         screen = self.screen
