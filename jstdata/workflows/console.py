@@ -15,7 +15,7 @@ from textual.widgets import Input, Label, ListItem, ListView, Static
 from ..client import JSTDataClient
 from ..models import Entity, EntityRelationship, Metric, Series, Resource as ApiResource
 from ..session import Session
-from .base import StepBinding, StepSpec, register
+from .base import StepArgument, StepBinding, StepSpec, register
 
 Resource: TypeAlias = Series | Entity | Metric | ApiResource
 InspectorResource: TypeAlias = Series | Entity | Metric | EntityRelationship
@@ -125,16 +125,39 @@ class WorkspaceScreen(Screen):
         text-style: bold;
     }
 
-    .col-name { width: 55%; }
-    .col-id   { width: 25%; }
-    .col-src  { width: 10%; }
-    .col-type { width: 10%; }
-
-    SearchResultRow {
-        padding: 0 1;
-        height: 1;
+    #results-list {
+        height: 1fr;
+        background: #0f0f0f;
     }
-    SearchResultRow:focus {
+
+    .col-name { width: 55%; height: 1; overflow: hidden; }
+    .col-id   { width: 25%; height: 1; overflow: hidden; }
+    .col-src  { width: 10%; height: 1; overflow: hidden; }
+    .col-type { width: 10%; height: 1; overflow: hidden; }
+
+    ListView > ListItem,
+    SearchResultRow,
+    InspectorResultRow {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        width: 100%;
+        padding: 0 1;
+        overflow: hidden;
+    }
+
+    SearchResultRow > Horizontal,
+    InspectorResultRow > Horizontal {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        overflow: hidden;
+    }
+
+    SearchResultRow:focus,
+    SearchResultRow.-highlighted,
+    InspectorResultRow:focus,
+    InspectorResultRow.-highlighted {
         background: #1a3a1a;
         color: #4ade80;
     }
@@ -186,27 +209,24 @@ class WorkspaceScreen(Screen):
         height: 1fr;
         background: #0f0f0f;
     }
-    .insp-col-type { width: 12; color: #888; }
-    .insp-col-name { width: 25; color: #fff; }
-    .insp-col-id   { width: 15; color: #4ade80; }
-    InspectorResultRow {
-        padding: 0 1;
-        height: 1;
-    }
-    InspectorResultRow:focus {
-        background: #1a3a1a;
-        color: #4ade80;
-    }
+    .insp-col-type { width: 12; height: 1; overflow: hidden; color: #888; }
+    .insp-col-name { width: 25; height: 1; overflow: hidden; color: #fff; }
+    .insp-col-id   { width: 15; height: 1; overflow: hidden; color: #4ade80; }
     """
 
     def __init__(
         self,
         client: JSTDataClient,
         session: Session,
+        taxonomy: str | None = None,
     ) -> None:
         super().__init__()
         self.client = client
         self.session = session
+        self.taxonomy = taxonomy or None
+        self.taxonomy_name = taxonomy
+        self.taxonomy_entities: list[Entity] = []
+        self.taxonomy_metrics: list[Metric] = []
 
         self.search_task: asyncio.Task[None] | None = None
         self.inspector_search_task: asyncio.Task[None] | None = None
@@ -220,7 +240,7 @@ class WorkspaceScreen(Screen):
     def compose(self) -> ComposeResult:
         with Vertical(id="workspace-body"):
             with Vertical(classes="pane-container", id="results-pane"):
-                yield Label("RESULTS // SEARCH_MATCHES", classes="pane-header")
+                yield Label("RESULTS // SEARCH_MATCHES", classes="pane-header", id="results-header")
                 with Horizontal(classes="table-header"):
                     yield Label("NAME", classes="col-name")
                     yield Label("ID", classes="col-id")
@@ -255,6 +275,45 @@ class WorkspaceScreen(Screen):
     def on_mount(self) -> None:
         self.query_one("#search-input").focus()
         self._refresh_help_hint()
+        if self.taxonomy:
+            self._apply_taxonomy_chrome()
+            self.run_taxonomy_preload()
+
+    def _apply_taxonomy_chrome(self) -> None:
+        label = self.taxonomy_name or self.taxonomy or ""
+        self.query_one("#results-header").update(f"RESULTS // TAXONOMY {label}")
+        self.query_one("#search-input", Input).placeholder = (
+            f"SEARCH WITHIN {label} (ENTITY | METRIC) ..."
+        )
+
+    def _show_taxonomy_catalog(self) -> None:
+        list_view = self.query_one("#results-list", ListView)
+        list_view.clear()
+        for resource in [*self.taxonomy_metrics, *self.taxonomy_entities]:
+            list_view.append(SearchResultRow(resource))
+
+    @work(exclusive=True)
+    async def run_taxonomy_preload(self) -> None:
+        """Load taxonomy metadata and a first page of members for the selector."""
+        if not self.taxonomy:
+            return
+        try:
+            tax = await asyncio.to_thread(self.client.get_taxonomy, self.taxonomy)
+            self.taxonomy_name = tax.name
+            self._apply_taxonomy_chrome()
+            entities, metrics = await asyncio.gather(
+                asyncio.to_thread(
+                    self.client.get_taxonomy_entities, self.taxonomy, 50
+                ),
+                asyncio.to_thread(
+                    self.client.get_taxonomy_metrics, self.taxonomy, 50
+                ),
+            )
+            self.taxonomy_entities = list(entities)
+            self.taxonomy_metrics = list(metrics)
+            self._show_taxonomy_catalog()
+        except Exception as e:
+            self.notify(f"Could not load taxonomy {self.taxonomy}: {e}", severity="error")
 
     def _refresh_help_hint(self) -> None:
         app = self.app
@@ -263,13 +322,19 @@ class WorkspaceScreen(Screen):
         step_id = getattr(app, "current_step_id", "console")
         parts = [
             f"{step_id} {i}/{n}",
-            "[bold]s[/bold] session",
-            "[bold]f[/bold] find",
-            "[bold]e[/bold] export",
-            "[bold]n[/bold]/[bold]p[/bold]",
-            "[bold]q[/bold] quit",
-            "[bold]?[/bold]",
         ]
+        if self.taxonomy:
+            parts.append(f"tax {self.taxonomy}")
+        parts.extend(
+            [
+                "[bold]s[/bold] session",
+                "[bold]f[/bold] find",
+                "[bold]e[/bold] export",
+                "[bold]n[/bold]/[bold]p[/bold]",
+                "[bold]q[/bold] quit",
+                "[bold]?[/bold]",
+            ]
+        )
         self.query_one("#help-hint").update(" // ".join(parts))
 
     def action_inspect(self) -> None:
@@ -294,14 +359,34 @@ class WorkspaceScreen(Screen):
         if self.search_task:
             self.search_task.cancel()
         if len(event.value) < 2:
-            self.query_one("#results-list", ListView).clear()
+            if self.taxonomy:
+                self._show_taxonomy_catalog()
+            else:
+                self.query_one("#results-list", ListView).clear()
             return
         self.search_task = asyncio.create_task(self._do_search(event.value))
 
     async def _do_search(self, query: str) -> None:
         try:
             await asyncio.sleep(0.3)
-            results = await asyncio.to_thread(self.client.search, query, limit=20)
+            if self.taxonomy:
+                entities, metrics = await asyncio.gather(
+                    asyncio.to_thread(
+                        self.client.search_entities,
+                        query,
+                        taxonomy=self.taxonomy,
+                        limit=15,
+                    ),
+                    asyncio.to_thread(
+                        self.client.search_metrics,
+                        query,
+                        taxonomy=self.taxonomy,
+                        limit=15,
+                    ),
+                )
+                results = [*metrics, *entities]
+            else:
+                results = await asyncio.to_thread(self.client.search, query, limit=20)
             list_view = self.query_one("#results-list", ListView)
             list_view.clear()
             for r in results:
@@ -544,8 +629,8 @@ class WorkspaceScreen(Screen):
             self.notify(f"Error adding to session: {e}", severity="error")
 
 
-def create_console_screen(client, session, **kwargs):
-    return WorkspaceScreen(client, session)
+def create_console_screen(client, session, taxonomy=None, **kwargs):
+    return WorkspaceScreen(client, session, taxonomy=taxonomy)
 
 
 CONSOLE = register(
@@ -557,7 +642,16 @@ CONSOLE = register(
             "stage resources; inspect related metadata."
         ),
         create_screen=create_console_screen,
-        arguments=(),
+        arguments=(
+            StepArgument(
+                name="taxonomy",
+                type="string",
+                description=(
+                    "Restrict search to entities and metrics in this taxonomy "
+                    "(slug, e.g. sec-central-index-key)"
+                ),
+            ),
+        ),
         bindings=(
             StepBinding(
                 "i", "inspect", "Inspect related resources for highlighted result"
@@ -571,6 +665,6 @@ CONSOLE = register(
             StepBinding("k / ↑", "cursor_up", "Move highlight up"),
             StepBinding("escape", "back", "Leave inspector focus"),
         ),
-        example="jst run console",
+        example="jst run console --taxonomy sec-central-index-key",
     )
 )

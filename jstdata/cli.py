@@ -106,10 +106,14 @@ def show_metric(id, format):
 
 @metric.command("search")
 @click.argument("query")
+@click.option("--taxonomy", help="Restrict search to metrics with series in a taxonomy")
+@click.option("--entity", help="Restrict search to metrics associated with an entity")
 @common_search_params
-def search_metrics(query, limit, offset, format):
+def search_metrics(query, taxonomy, entity, limit, offset, format):
     """Search for metrics by intent."""
-    results = client.search_metrics(query, limit=limit, offset=offset)
+    results = client.search_metrics(
+        query, entity=entity, taxonomy=taxonomy, limit=limit, offset=offset
+    )
     format_and_print(results, format)
 
 @metric.command("series")
@@ -136,10 +140,14 @@ def show_entity(id, format):
 
 @entity.command("search")
 @click.argument("query")
+@click.option("--taxonomy", help="Restrict search to entities in a taxonomy")
+@click.option("--metric", help="Restrict search to entities associated with a metric")
 @common_search_params
-def search_entities(query, limit, offset, format):
+def search_entities(query, taxonomy, metric, limit, offset, format):
     """Search for entities by intent."""
-    results = client.search_entities(query, limit=limit, offset=offset)
+    results = client.search_entities(
+        query, metric=metric, taxonomy=taxonomy, limit=limit, offset=offset
+    )
     format_and_print(results, format)
 
 @entity.command("series")
@@ -156,6 +164,43 @@ def entity_series(id, limit, offset, format):
 def entity_relations(id, limit, offset, format):
     """Walk the entity graph."""
     results = client.get_entity_relations(id, limit=limit, offset=offset)
+    format_and_print(results, format)
+
+# --- Taxonomy Commands ---
+
+@cli.group()
+def taxonomy():
+    """Commands for interacting with Taxonomies (membership catalogs)."""
+
+@taxonomy.command("ls")
+@common_params
+def list_taxonomies(limit, offset, format):
+    """List available taxonomies."""
+    results = client.list_taxonomies(limit=limit, offset=offset)
+    format_and_print(results, format)
+
+@taxonomy.command("show")
+@click.argument("id")
+@click.option("--format", default="pretty")
+def show_taxonomy(id, format):
+    """Show details for a specific taxonomy."""
+    results = client.get_taxonomy(id)
+    format_and_print(results, format)
+
+@taxonomy.command("entities")
+@click.argument("id")
+@common_params
+def taxonomy_entities(id, limit, offset, format):
+    """List entities that participate in a taxonomy."""
+    results = client.get_taxonomy_entities(id, limit=limit, offset=offset)
+    format_and_print(results, format)
+
+@taxonomy.command("metrics")
+@click.argument("id")
+@common_params
+def taxonomy_metrics(id, limit, offset, format):
+    """List metrics with series on entities in a taxonomy."""
+    results = client.get_taxonomy_metrics(id, limit=limit, offset=offset)
     format_and_print(results, format)
 
 # --- Series Commands ---
@@ -221,8 +266,9 @@ def query(metric, entity, series, frequency, start_date, end_date, start_time, e
         start_date=start_date,
         end_date=end_date,
         start_time=start_time,
+        end_time=end_time,
         limit=limit,
-        offset=offset
+        offset=offset,
     )
     
     format_and_print(results, format)

@@ -16,6 +16,7 @@ from .models import (
     Series,
     TimeSeries,
     Resource,
+    Taxonomy,
 )
 
 APP_DIR = Path.home() / ".jstdata"
@@ -272,6 +273,40 @@ class JSTDataClient:
         )
         return [EntityRelationship.from_dict(r) for r in data["records"]]
 
+    # --- Taxonomies ---
+
+    def list_taxonomies(
+        self, limit: int = 100, offset: int = 0, sort_order: str = "asc"
+    ) -> List[Taxonomy]:
+        """List taxonomies that have identity (membership) relationships."""
+        data = self.make_request(
+            "taxonomy", {"limit": limit, "offset": offset, "sort_order": sort_order}
+        )
+        return [Taxonomy.from_dict(t) for t in data["records"]]
+
+    def get_taxonomy(self, taxonomy_id: str) -> Taxonomy:
+        """Get details for a specific taxonomy."""
+        data = self.make_request(f"taxonomy/{taxonomy_id}")
+        return Taxonomy.from_dict(data)
+
+    def get_taxonomy_entities(
+        self, taxonomy_id: str, limit: int = 100, offset: int = 0
+    ) -> List[Entity]:
+        """List entities that themselves participate in a taxonomy."""
+        data = self.make_request(
+            f"taxonomy/{taxonomy_id}/entities", {"limit": limit, "offset": offset}
+        )
+        return [Entity.from_dict(e) for e in data["records"]]
+
+    def get_taxonomy_metrics(
+        self, taxonomy_id: str, limit: int = 100, offset: int = 0
+    ) -> List[Metric]:
+        """List metrics with series on entities in a taxonomy."""
+        data = self.make_request(
+            f"taxonomy/{taxonomy_id}/metrics", {"limit": limit, "offset": offset}
+        )
+        return [Metric.from_dict(m) for m in data["records"]]
+
     # --- Search ---
 
     def search(
@@ -293,24 +328,38 @@ class JSTDataClient:
         return results
 
     def search_entities(
-        self, query: str, metric: Optional[str] = None, limit: int = 5, offset: int = 0
+        self,
+        query: str,
+        metric: Optional[str] = None,
+        taxonomy: Optional[str] = None,
+        limit: int = 5,
+        offset: int = 0,
     ) -> List[Entity]:
         """Search for entities."""
         params = {"query": query, "limit": limit, "offset": offset}
         if metric:
             params["metric"] = metric
+        if taxonomy:
+            params["taxonomy"] = taxonomy
         data = self.make_request(
             "search/entities", params
         )
         return [Entity.from_dict(e) for e in data["records"]]
 
     def search_metrics(
-        self, query: str, entity: Optional[str] = None, limit: int = 5, offset: int = 0
+        self,
+        query: str,
+        entity: Optional[str] = None,
+        taxonomy: Optional[str] = None,
+        limit: int = 5,
+        offset: int = 0,
     ) -> List[Metric]:
         """Search for metrics."""
         params = {"query": query, "limit": limit, "offset": offset}
         if entity:
             params["entity"] = entity
+        if taxonomy:
+            params["taxonomy"] = taxonomy
         data = self.make_request(
             "search/metrics", params
         )
@@ -337,7 +386,9 @@ class JSTDataClient:
         end_date: Optional[str] = None,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
-        order_by: Optional[str] = None
+        order_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
     ) -> List[TimeSeries]:
         """
         Query for observations. This is the main data extraction method.
@@ -351,7 +402,9 @@ class JSTDataClient:
             "end_date": end_date,
             "order_by": order_by,
             "start_time": start_time,
-            "end_time": end_time
+            "end_time": end_time,
+            "limit": limit,
+            "offset": offset,
         }
         # Filter out None values
         params = {k: v for k, v in params.items() if v is not None}

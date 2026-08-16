@@ -48,13 +48,33 @@ def test_metric_ls(runner, mock_url):
         assert "Gross Domestic Product" in result.output
 
 
+def test_taxonomy_ls(runner, mock_url):
+    mock_data = {
+        "records": [
+            {"id": "sec-central-index-key", "name": "SEC Central Index Key"}
+        ]
+    }
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/taxonomy", json=mock_data)
+        result = runner.invoke(cli, ["taxonomy", "ls"])
+        assert result.exit_code == 0
+        assert "sec-central-index-key" in result.output
+        assert "SEC Central Index Key" in result.output
+
+
 def test_query_direct_id(runner, mock_url):
     """Test 'query' command with direct IDs."""
     mock_query_data = {
         "records": [
             {
-                "series_id": "ABC123",
-                "entities": ["usa"],
+                "id": "ABC123",
+                "label": "GDP USA",
+                "frequency": "Quarterly",
+                "source": "BEA",
+                "units": "USD",
+                "last_updated": "2024-01-01T00:00:00",
+                "metric_id": "gdp",
+                "entities": [{"id": "usa", "label": "USA"}],
                 "observations": [
                     {
                         "observation_timestamp": "2024-01-01T00:00:00",
@@ -70,11 +90,15 @@ def test_query_direct_id(runner, mock_url):
         m.get(f"{mock_url}/search/metrics", json={"records": [{"id": "gdp", "name": "GDP"}]})
         m.get(f"{mock_url}/search/entities", json={"records": [{"id": "usa", "label": "USA"}]})
         m.get(f"{mock_url}/query", json=mock_query_data)
-        
-        result = runner.invoke(cli, ["query", "--metric", "gdp", "--entity", "usa"])
-        assert result.exit_code == 0
+
+        result = runner.invoke(
+            cli, ["query", "--metric", "gdp", "--entity", "usa", "--limit", "50"]
+        )
+        assert result.exit_code == 0, result.output
         assert "ABC123" in result.output
         assert "100.0" in result.output
+        query_req = [r for r in m.request_history if "/query" in r.url][-1]
+        assert query_req.qs["limit"] == ["50"]
 
 
 def test_query_fuzzy_resolution(runner, mock_url):
@@ -82,8 +106,10 @@ def test_query_fuzzy_resolution(runner, mock_url):
     mock_query_data = {
         "records": [
             {
-                "series_id": "ABC123",
-                "entities": ["usa"],
+                "id": "ABC123",
+                "label": "GDP USA",
+                "last_updated": "2024-01-01T00:00:00",
+                "entities": [{"id": "usa", "label": "USA"}],
                 "observations": [
                     {
                         "observation_timestamp": "2024-01-01T00:00:00",
@@ -137,7 +163,7 @@ def test_step_json(runner):
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["id"] == "console"
-    assert data["arguments"] == []
+    assert any(a["name"] == "taxonomy" for a in data["arguments"])
     assert any(b["key"] == "i" for b in data["bindings"])
 
 

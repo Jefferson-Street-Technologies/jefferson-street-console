@@ -30,14 +30,16 @@ def test_console_is_registered():
     assert "console" in ids
     console = get_step("console")
     assert console.name == "Console"
-    assert console.to_dict()["example"] == "jst run console"
+    assert console.to_dict()["example"] == "jst run console --taxonomy sec-central-index-key"
     assert any(b["key"] == "i" for b in console.to_dict()["bindings"])
+    assert any(a["name"] == "taxonomy" for a in console.to_dict()["arguments"])
 
 
 def test_format_step_help_console():
     text = format_step_help(get_step("console"))
     assert "Console" in text
-    assert "jst run console" in text
+    assert "jst run console --taxonomy sec-central-index-key" in text
+    assert "--taxonomy" in text
     assert "Keybindings:" in text
     assert "inspect" in text.lower()
 
@@ -95,6 +97,13 @@ def test_resolve_pipeline_console():
     assert resolved[0].spec.id == "console"
     assert resolved[0].kwargs == {}
     assert resolved[1].spec.id == "console"
+
+
+def test_resolve_pipeline_console_taxonomy():
+    resolved = resolve_pipeline(["console", "--taxonomy", "sec-central-index-key"])
+    assert len(resolved) == 1
+    assert resolved[0].spec.id == "console"
+    assert resolved[0].kwargs == {"taxonomy": "sec-central-index-key"}
 
 
 def test_resolve_pipeline_unknown_step():
