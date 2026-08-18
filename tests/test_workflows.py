@@ -33,7 +33,7 @@ def test_console_is_registered():
     assert console.to_dict()["example"] == (
         "jst run console --taxonomy sec-central-index-key --resource-type entity"
     )
-    assert any(b["key"] == "i" for b in console.to_dict()["bindings"])
+    assert any(b["key"] == "/" for b in console.to_dict()["bindings"])
     assert any(a["name"] == "taxonomy" for a in console.to_dict()["arguments"])
     resource_type = next(
         a for a in console.to_dict()["arguments"] if a["name"] == "resource_type"
@@ -49,7 +49,7 @@ def test_format_step_help_console():
     assert "--taxonomy" in text
     assert "--resource-type" in text
     assert "Keybindings:" in text
-    assert "inspect" in text.lower()
+    assert "/" in text
 
 
 def test_default_session_path_is_well_formed():

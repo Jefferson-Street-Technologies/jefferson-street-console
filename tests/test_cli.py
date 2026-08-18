@@ -176,7 +176,7 @@ def test_step_json(runner):
     assert data["id"] == "console"
     assert any(a["name"] == "taxonomy" for a in data["arguments"])
     assert any(a["name"] == "resource_type" for a in data["arguments"])
-    assert any(b["key"] == "i" for b in data["bindings"])
+    assert any(b["key"] == "/" for b in data["bindings"])
 
 
 def test_step_unknown(runner):

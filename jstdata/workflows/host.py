@@ -187,8 +187,8 @@ class WorkflowHost(App):
         self.push_screen(self._make_current_screen())
 
     def _pop_overlays(self) -> None:
-        """Pop modals until a single step screen remains."""
-        while len(self.screen_stack) > 1:
+        """Dismiss modals. Keep the default screen plus the current step."""
+        while len(self.screen_stack) > 2:
             self.pop_screen()
 
     def action_next_step(self) -> None:
@@ -230,9 +230,10 @@ class WorkflowHost(App):
         """Leave step-local filter / inspector focus when applicable."""
         focused = self.focused
         screen = self.screen
-        if getattr(focused, "id", None) == "metrics-filter" and hasattr(
-            screen, "action_leave_filter"
-        ):
+        if getattr(focused, "id", None) in (
+            "metrics-filter",
+            "search-input",
+        ) and hasattr(screen, "action_leave_filter"):
             screen.action_leave_filter()
             return
         if focused and getattr(focused, "id", None) in (

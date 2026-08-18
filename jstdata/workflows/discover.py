@@ -27,13 +27,13 @@ MODES = ("union", "intersect")
 class EntityRow(ListItem):
     can_focus = False
 
-    def __init__(self, entity_id: str, name: str) -> None:
+    def __init__(self, entity_id: str, caption: str) -> None:
         super().__init__()
         self.entity_id = entity_id
-        self.name = name
+        self.caption = caption
 
     def compose(self) -> ComposeResult:
-        yield Label(self.name)
+        yield Label(self.caption)
 
 
 class MetricRow(ListItem):
@@ -154,7 +154,7 @@ class DiscoverScreen(Screen):
         self.session = session
         self.mode = mode if mode in MODES else "union"
         self.filter_query = ""
-        self.offset = 0
+        self.page_offset = 0
         self.has_more = False
         self.loading_more = False
         self.search_task: asyncio.Task[None] | None = None
@@ -253,7 +253,7 @@ class DiscoverScreen(Screen):
         labels = self._labels()
         for eid in snapshot:
             roster.append(EntityRow(eid, label_for(labels, eid)))
-        self.offset = 0
+        self.page_offset = 0
         self._metrics = []
         self.query_one("#metrics-list", ListView).clear()
         self.load_metrics(reset=True)
@@ -264,7 +264,7 @@ class DiscoverScreen(Screen):
             self.loading_more = False
             return
         if reset:
-            self.offset = 0
+            self.page_offset = 0
             self.has_more = False
         status = self.query_one("#metrics-status")
         status.update("Loading metrics…")
@@ -276,7 +276,7 @@ class DiscoverScreen(Screen):
                 entity=list(self.session.entity),
                 mode=self.mode,
                 limit=PAGE_SIZE,
-                offset=self.offset,
+                offset=self.page_offset,
             )
         except Exception as e:
             status.update(f"Error: {e}")
@@ -388,9 +388,9 @@ class DiscoverScreen(Screen):
         index = list_view.index
         if index is None or index < len(self._metrics) - 1:
             return
-            self.loading_more = True
-            self.offset = len(self._metrics)
-            self.load_metrics(reset=False)
+        self.loading_more = True
+        self.page_offset = len(self._metrics)
+        self.load_metrics(reset=False)
 
     @work(exclusive=True, group="preview")
     async def run_preview(self, metric: Metric) -> None:
