@@ -1,0 +1,475 @@
+"""Discover step — metric candidates for session entities, with a preview chart."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import date, timedelta
+from typing import Optional
+
+from textual import on, work
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, ScrollableContainer, Vertical
+from textual.screen import Screen
+from textual.widgets import Input, Label, ListItem, ListView, Static
+
+from ..client import JSTDataClient
+from ..models import Metric, TimeSeries
+from ..session import Session
+from .base import StepArgument, StepBinding, StepSpec, label_for, register
+from .chart import LABEL_WIDTH, pick_frequency, pick_series_per_entity, render_preview
+
+PAGE_SIZE = 100
+PREVIEW_YEARS = 5
+MODES = ("union", "intersect")
+
+
+class EntityRow(ListItem):
+    can_focus = False
+
+    def __init__(self, entity_id: str, name: str) -> None:
+        super().__init__()
+        self.entity_id = entity_id
+        self.name = name
+
+    def compose(self) -> ComposeResult:
+        yield Label(self.name)
+
+
+class MetricRow(ListItem):
+    def __init__(self, metric: Metric, staged: bool = False) -> None:
+        super().__init__()
+        self.metric = metric
+        self.staged = staged
+
+    def compose(self) -> ComposeResult:
+        mark = "● " if self.staged else "  "
+        yield Label(f"{mark}{self.metric.name}  [{self.metric.id}]")
+
+
+class DiscoverScreen(Screen):
+    """Entities roster, candidate metrics, and a last-five-years bar preview."""
+
+    BINDINGS = [
+        Binding("slash", "focus_filter", "Filter metrics", key_display="/"),
+        Binding("escape", "leave_filter", "Leave filter", show=False),
+        Binding("tab", "cycle_panes", "Switch list / preview", priority=True),
+        Binding(
+            "shift+tab",
+            "cycle_panes",
+            "Switch panes reverse",
+            show=False,
+            priority=True,
+        ),
+        Binding("shift+enter", "add_metric", "Add metric to session", priority=True),
+        Binding("j", "cursor_down", "Move highlight down", show=False),
+        Binding("k", "cursor_up", "Move highlight up", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    #discover-body { height: 1fr; }
+
+    .pane-container {
+        border: solid #222;
+        background: #0f0f0f;
+    }
+    #top-row { height: 55%; }
+    #entities-pane { width: 32%; }
+    #metrics-pane { width: 1fr; }
+    #preview-pane { height: 1fr; border-top: solid #333; }
+
+    .pane-header {
+        background: #1a1a1a;
+        color: #4ade80;
+        padding: 0 1;
+        text-style: bold;
+        height: 1;
+    }
+
+    #entities-list, #metrics-list {
+        height: 1fr;
+        background: #0f0f0f;
+    }
+
+    ListView > ListItem,
+    EntityRow,
+    MetricRow {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        width: 100%;
+        padding: 0 1;
+        overflow: hidden;
+    }
+
+    MetricRow:focus,
+    MetricRow.-highlighted {
+        background: #1a3a1a;
+        color: #4ade80;
+    }
+
+    #empty-prompt {
+        height: 1fr;
+        padding: 2 2;
+        color: #4ade80;
+        text-style: bold;
+        background: #111111;
+    }
+
+    #metrics-filter {
+        height: 3;
+        background: transparent;
+        border: none;
+        border-bottom: solid #333;
+        padding: 0 1;
+    }
+
+    #metrics-status {
+        height: 1;
+        color: #888;
+        padding: 0 1;
+    }
+
+    #preview-scroll { height: 1fr; background: #0f0f0f; }
+    #preview-chart {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+        color: #e0e0e0;
+    }
+
+    #cmd-bar {
+        height: 3;
+        background: #0f0f0f;
+        border-top: solid #4ade80;
+        align: left middle;
+        padding: 0 1;
+    }
+    #help-hint { color: #888; }
+    """
+
+    def __init__(self, client: JSTDataClient, session: Session, mode: str = "union"):
+        super().__init__()
+        self.client = client
+        self.session = session
+        self.mode = mode if mode in MODES else "union"
+        self.filter_query = ""
+        self.offset = 0
+        self.has_more = False
+        self.loading_more = False
+        self.search_task: asyncio.Task[None] | None = None
+        self._entity_snapshot: tuple[str, ...] = ()
+        self._metrics: list[Metric] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="discover-body"):
+            with Horizontal(id="top-row"):
+                with Vertical(classes="pane-container", id="entities-pane"):
+                    yield Label("ENTITIES // SESSION", classes="pane-header")
+                    yield ListView(id="entities-list")
+                    yield Static(
+                        "No entities in session.\n\n"
+                        "Press [bold]f[/bold] to find entities and add them.\n"
+                        "Metrics in this step are generated from that set.",
+                        id="empty-prompt",
+                        markup=True,
+                    )
+                with Vertical(classes="pane-container", id="metrics-pane"):
+                    yield Label(
+                        "METRICS // CANDIDATES",
+                        classes="pane-header",
+                        id="metrics-header",
+                    )
+                    yield Input(
+                        placeholder="/ filter metrics in this set…",
+                        id="metrics-filter",
+                    )
+                    yield ListView(id="metrics-list")
+                    yield Label("", id="metrics-status")
+            with Vertical(classes="pane-container", id="preview-pane"):
+                yield Label(
+                    "PREVIEW // LAST 5 YEARS",
+                    classes="pane-header",
+                    id="preview-header",
+                )
+                with ScrollableContainer(id="preview-scroll"):
+                    yield Static(
+                        "Highlight a metric and press Enter to preview.",
+                        id="preview-chart",
+                    )
+        with Horizontal(id="cmd-bar"):
+            yield Label("", id="help-hint")
+
+    def on_mount(self) -> None:
+        self.query_one("#entities-list", ListView).can_focus = False
+        self._refresh_help_hint()
+        self._sync_entities(force=True)
+        self.query_one("#metrics-list", ListView).focus()
+
+    def on_screen_resume(self) -> None:
+        self._sync_entities()
+
+    def _labels(self) -> dict[str, str]:
+        return getattr(self.app, "labels", {})
+
+    def _refresh_help_hint(self) -> None:
+        n = getattr(self.app, "step_count", 1)
+        i = getattr(self.app, "step_index", 0) + 1
+        parts = [
+            f"discover {i}/{n}",
+            f"mode {self.mode}",
+            "[bold]/[/bold] filter",
+            "[bold]enter[/bold] preview",
+            "[bold]shift+enter[/bold] add",
+            "[bold]tab[/bold] panes",
+            "[bold]s[/bold] session",
+            "[bold]f[/bold] find",
+            "[bold]e[/bold] export",
+            "[bold]n[/bold]/[bold]p[/bold]",
+            "[bold]q[/bold] quit",
+            "[bold]?[/bold]",
+        ]
+        self.query_one("#help-hint").update(" // ".join(parts))
+
+    def _sync_entities(self, force: bool = False) -> None:
+        snapshot = tuple(self.session.entity)
+        if not force and snapshot == self._entity_snapshot:
+            return
+        self._entity_snapshot = snapshot
+        empty = self.query_one("#empty-prompt")
+        roster = self.query_one("#entities-list", ListView)
+        roster.clear()
+        if not snapshot:
+            empty.display = True
+            roster.display = False
+            self.query_one("#metrics-list", ListView).clear()
+            self._metrics = []
+            self.query_one("#metrics-status").update(
+                "Add entities to generate metrics."
+            )
+            return
+        empty.display = False
+        roster.display = True
+        labels = self._labels()
+        for eid in snapshot:
+            roster.append(EntityRow(eid, label_for(labels, eid)))
+        self.offset = 0
+        self._metrics = []
+        self.query_one("#metrics-list", ListView).clear()
+        self.load_metrics(reset=True)
+
+    @work(exclusive=True, group="metrics")
+    async def load_metrics(self, reset: bool = False) -> None:
+        if not self.session.entity:
+            self.loading_more = False
+            return
+        if reset:
+            self.offset = 0
+            self.has_more = False
+        status = self.query_one("#metrics-status")
+        status.update("Loading metrics…")
+        query = self.filter_query.strip() or None
+        try:
+            metrics = await asyncio.to_thread(
+                self.client.search_metrics,
+                query,
+                entity=list(self.session.entity),
+                mode=self.mode,
+                limit=PAGE_SIZE,
+                offset=self.offset,
+            )
+        except Exception as e:
+            status.update(f"Error: {e}")
+            self.loading_more = False
+            return
+        if reset:
+            self._metrics = []
+            self.query_one("#metrics-list", ListView).clear()
+        self._metrics.extend(metrics)
+        self.has_more = len(metrics) == PAGE_SIZE
+        list_view = self.query_one("#metrics-list", ListView)
+        staged = set(self.session.metric)
+        for metric in metrics:
+            list_view.append(MetricRow(metric, staged=metric.id in staged))
+        shown = len(self._metrics)
+        extra = "+" if self.has_more else ""
+        qlabel = f"“{query}”" if query else "all"
+        status.update(f"{shown}{extra} · {qlabel} · {self.mode}")
+        self.query_one("#metrics-header").update(f"METRICS // {self.mode.upper()}")
+        self.loading_more = False
+
+    def action_focus_filter(self) -> None:
+        filt = self.query_one("#metrics-filter", Input)
+        filt.focus()
+
+    def action_leave_filter(self) -> None:
+        filt = self.query_one("#metrics-filter", Input)
+        if self.focused is filt:
+            self.query_one("#metrics-list", ListView).focus()
+
+    def action_cycle_panes(self) -> None:
+        if isinstance(self.focused, Input):
+            self.query_one("#metrics-list", ListView).focus()
+            return
+        if self.focused is self.query_one("#metrics-list"):
+            self.query_one("#preview-scroll").focus()
+        else:
+            self.query_one("#metrics-list", ListView).focus()
+
+    def action_cursor_down(self) -> None:
+        focused = self.focused
+        if isinstance(focused, Input):
+            return
+        if focused and hasattr(focused, "action_cursor_down"):
+            focused.action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        focused = self.focused
+        if isinstance(focused, Input):
+            return
+        if focused and hasattr(focused, "action_cursor_up"):
+            focused.action_cursor_up()
+
+    def _highlighted_metric(self) -> Optional[Metric]:
+        child = self.query_one("#metrics-list", ListView).highlighted_child
+        if isinstance(child, MetricRow):
+            return child.metric
+        return None
+
+    def action_add_metric(self) -> None:
+        metric = self._highlighted_metric()
+        if metric is None:
+            self.notify("Highlight a metric first", severity="warning")
+            return
+        if not self.session.add_metric(metric.id):
+            self.notify(f"{metric.id} is already in session", severity="warning")
+            return
+        if hasattr(self.app, "remember_label"):
+            self.app.remember_label(metric.id, metric.name or metric.id)
+        self.notify(f"Added {metric.id} to session")
+        child = self.query_one("#metrics-list", ListView).highlighted_child
+        if isinstance(child, MetricRow):
+            child.staged = True
+            try:
+                child.query_one(Label).update(f"● {metric.name}  [{metric.id}]")
+            except Exception:
+                pass
+
+    @on(Input.Changed, "#metrics-filter")
+    def on_filter_changed(self, event: Input.Changed) -> None:
+        if self.search_task:
+            self.search_task.cancel()
+        self.search_task = asyncio.create_task(self._debounced_filter(event.value))
+
+    async def _debounced_filter(self, value: str) -> None:
+        try:
+            await asyncio.sleep(0.3)
+            self.filter_query = value
+            self.load_metrics(reset=True)
+        except asyncio.CancelledError:
+            pass
+
+    @on(Input.Submitted, "#metrics-filter")
+    def on_filter_submit(self) -> None:
+        self.query_one("#metrics-list", ListView).focus()
+
+    @on(ListView.Selected, "#metrics-list")
+    def on_metric_selected(self, event: ListView.Selected) -> None:
+        if isinstance(event.item, MetricRow):
+            self.run_preview(event.item.metric)
+
+    @on(ListView.Highlighted, "#metrics-list")
+    def on_metric_highlighted(self, event: ListView.Highlighted) -> None:
+        if self.loading_more or not self.has_more:
+            return
+        list_view = self.query_one("#metrics-list", ListView)
+        if event.item is None:
+            return
+        index = list_view.index
+        if index is None or index < len(self._metrics) - 1:
+            return
+            self.loading_more = True
+            self.offset = len(self._metrics)
+            self.load_metrics(reset=False)
+
+    @work(exclusive=True, group="preview")
+    async def run_preview(self, metric: Metric) -> None:
+        chart = self.query_one("#preview-chart", Static)
+        header = self.query_one("#preview-header")
+        if not self.session.entity:
+            chart.update("Add entities before previewing.")
+            return
+        header.update(f"PREVIEW // {metric.name}")
+        chart.update("Loading observations…")
+        start = (date.today() - timedelta(days=365 * PREVIEW_YEARS)).isoformat()
+        try:
+            series_list: list[TimeSeries] = await asyncio.to_thread(
+                self.client.query,
+                metric=metric.id,
+                entity=list(self.session.entity),
+                start_date=start,
+            )
+        except Exception as e:
+            chart.update(f"Preview failed: {e}")
+            return
+        frequency = pick_frequency(series_list)
+        if not frequency:
+            chart.update("No observations in the last 5 years.")
+            return
+        picked = pick_series_per_entity(series_list, self.session.entity, frequency)
+        units = next(
+            (ts.series.units for ts in picked.values() if ts is not None),
+            "",
+        )
+        width = max(24, (self.size.width or 80) - LABEL_WIDTH - 2)
+        text = render_preview(
+            metric.name,
+            frequency,
+            units,
+            {eid: label_for(self._labels(), eid) for eid in self.session.entity},
+            picked,
+            bar_width=width,
+        )
+        chart.update(text)
+
+
+def create_discover_screen(client, session, mode="union", **kwargs):
+    return DiscoverScreen(client, session, mode=mode)
+
+
+DISCOVER = register(
+    StepSpec(
+        id="discover",
+        name="Discover",
+        description=(
+            "Find metrics related to session entities, preview recent coverage, "
+            "and stage promising metrics."
+        ),
+        create_screen=create_discover_screen,
+        arguments=(
+            StepArgument(
+                name="mode",
+                type="string",
+                description="union (any entity) or intersect (every entity)",
+                default="union",
+                choices=MODES,
+            ),
+        ),
+        bindings=(
+            StepBinding("/", "focus_filter", "Filter the generated metric list"),
+            StepBinding(
+                "enter",
+                "preview",
+                "Preview last 5 years for the highlighted metric",
+            ),
+            StepBinding(
+                "shift+enter", "add_metric", "Add highlighted metric to the session"
+            ),
+            StepBinding(
+                "tab", "cycle_panes", "Switch focus between metrics and preview"
+            ),
+            StepBinding("escape", "leave_filter", "Leave the metric filter"),
+        ),
+        example="jst run console --taxonomy country : discover --mode union",
+    )
+)

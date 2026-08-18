@@ -219,6 +219,7 @@ class WorkspaceScreen(Screen):
         client: JSTDataClient,
         session: Session,
         taxonomy: str | None = None,
+        resource_type: str | None = None,
     ) -> None:
         super().__init__()
         self.client = client
@@ -227,6 +228,9 @@ class WorkspaceScreen(Screen):
         self.taxonomy_name = taxonomy
         self.taxonomy_entities: list[Entity] = []
         self.taxonomy_metrics: list[Metric] = []
+        self.resource_type = (resource_type or "").strip().lower() or None
+        if self.resource_type not in (None, "entity", "metric", "series"):
+            self.resource_type = None
 
         self.search_task: asyncio.Task[None] | None = None
         self.inspector_search_task: asyncio.Task[None] | None = None
@@ -275,21 +279,41 @@ class WorkspaceScreen(Screen):
     def on_mount(self) -> None:
         self.query_one("#search-input").focus()
         self._refresh_help_hint()
+        if self.taxonomy or self.resource_type:
+            self._apply_search_chrome()
         if self.taxonomy:
-            self._apply_taxonomy_chrome()
             self.run_taxonomy_preload()
 
-    def _apply_taxonomy_chrome(self) -> None:
-        label = self.taxonomy_name or self.taxonomy or ""
-        self.query_one("#results-header").update(f"RESULTS // TAXONOMY {label}")
-        self.query_one("#search-input", Input).placeholder = (
-            f"SEARCH WITHIN {label} (ENTITY | METRIC) ..."
-        )
+    def _apply_search_chrome(self) -> None:
+        tax = self.taxonomy_name or self.taxonomy or ""
+        rtype = self.resource_type.upper() if self.resource_type else ""
+        if tax and rtype:
+            header = f"RESULTS // {rtype} IN {tax}"
+            placeholder = f"SEARCH {rtype} WITHIN {tax} ..."
+        elif tax:
+            header = f"RESULTS // TAXONOMY {tax}"
+            placeholder = f"SEARCH WITHIN {tax} (ENTITY | METRIC) ..."
+        elif rtype:
+            header = f"RESULTS // {rtype}"
+            placeholder = f"SEARCH {rtype} ..."
+        else:
+            return
+        self.query_one("#results-header").update(header)
+        self.query_one("#search-input", Input).placeholder = placeholder
 
     def _show_taxonomy_catalog(self) -> None:
         list_view = self.query_one("#results-list", ListView)
         list_view.clear()
-        for resource in [*self.taxonomy_metrics, *self.taxonomy_entities]:
+        resources: list[Resource] = []
+        if self.resource_type == "entity":
+            resources = list(self.taxonomy_entities)
+        elif self.resource_type == "metric":
+            resources = list(self.taxonomy_metrics)
+        elif self.resource_type == "series":
+            resources = []
+        else:
+            resources = [*self.taxonomy_metrics, *self.taxonomy_entities]
+        for resource in resources:
             list_view.append(SearchResultRow(resource))
 
     @work(exclusive=True)
@@ -300,7 +324,7 @@ class WorkspaceScreen(Screen):
         try:
             tax = await asyncio.to_thread(self.client.get_taxonomy, self.taxonomy)
             self.taxonomy_name = tax.name
-            self._apply_taxonomy_chrome()
+            self._apply_search_chrome()
             entities, metrics = await asyncio.gather(
                 asyncio.to_thread(
                     self.client.get_taxonomy_entities, self.taxonomy, 50
@@ -325,6 +349,8 @@ class WorkspaceScreen(Screen):
         ]
         if self.taxonomy:
             parts.append(f"tax {self.taxonomy}")
+        if self.resource_type:
+            parts.append(self.resource_type)
         parts.extend(
             [
                 "[bold]s[/bold] session",
@@ -384,7 +410,28 @@ class WorkspaceScreen(Screen):
                         limit=15,
                     ),
                 )
-                results = [*metrics, *entities]
+                if self.resource_type == "entity":
+                    results = list(entities)
+                elif self.resource_type == "metric":
+                    results = list(metrics)
+                elif self.resource_type == "series":
+                    results = await asyncio.to_thread(
+                        self.client.search_series, query, limit=20
+                    )
+                else:
+                    results = [*metrics, *entities]
+            elif self.resource_type == "entity":
+                results = await asyncio.to_thread(
+                    self.client.search_entities, query, limit=20
+                )
+            elif self.resource_type == "metric":
+                results = await asyncio.to_thread(
+                    self.client.search_metrics, query, limit=20
+                )
+            elif self.resource_type == "series":
+                results = await asyncio.to_thread(
+                    self.client.search_series, query, limit=20
+                )
             else:
                 results = await asyncio.to_thread(self.client.search, query, limit=20)
             list_view = self.query_one("#results-list", ListView)
@@ -629,8 +676,12 @@ class WorkspaceScreen(Screen):
             self.notify(f"Error adding to session: {e}", severity="error")
 
 
-def create_console_screen(client, session, taxonomy=None, **kwargs):
-    return WorkspaceScreen(client, session, taxonomy=taxonomy)
+def create_console_screen(
+    client, session, taxonomy=None, resource_type=None, **kwargs
+):
+    return WorkspaceScreen(
+        client, session, taxonomy=taxonomy, resource_type=resource_type
+    )
 
 
 CONSOLE = register(
@@ -651,6 +702,12 @@ CONSOLE = register(
                     "(slug, e.g. sec-central-index-key)"
                 ),
             ),
+            StepArgument(
+                name="resource_type",
+                type="string",
+                description="Restrict search to series, metric, or entity",
+                choices=("series", "metric", "entity"),
+            ),
         ),
         bindings=(
             StepBinding(
@@ -665,6 +722,6 @@ CONSOLE = register(
             StepBinding("k / ↑", "cursor_up", "Move highlight up"),
             StepBinding("escape", "back", "Leave inspector focus"),
         ),
-        example="jst run console --taxonomy sec-central-index-key",
+        example="jst run console --taxonomy sec-central-index-key --resource-type entity",
     )
 )

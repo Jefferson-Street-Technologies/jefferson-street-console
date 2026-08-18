@@ -5,7 +5,7 @@
     jst steps
     jst step console
     jst run console
-    jst run console : console
+    jst run console : discover --mode union
 """
 
 from .base import (
@@ -24,6 +24,7 @@ from .base import (
     split_pipeline,
 )
 from . import console as _console  # noqa: F401  — registers console
+from . import discover as _discover  # noqa: F401  — registers discover
 
 __all__ = [
     "PipelineError",

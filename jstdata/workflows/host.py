@@ -227,14 +227,20 @@ class WorkflowHost(App):
             screen.action_inspect()
 
     def action_back(self) -> None:
-        """Leave step-local inspector focus when applicable."""
+        """Leave step-local filter / inspector focus when applicable."""
         focused = self.focused
+        screen = self.screen
+        if getattr(focused, "id", None) == "metrics-filter" and hasattr(
+            screen, "action_leave_filter"
+        ):
+            screen.action_leave_filter()
+            return
         if focused and getattr(focused, "id", None) in (
             "inspector-search-input",
             "inspector-results-list",
         ):
             try:
-                self.screen.query_one("#search-input", Input).focus()
+                screen.query_one("#search-input", Input).focus()
             except Exception:
                 pass
 

@@ -76,7 +76,7 @@ Do **not** encode step ordering in metadata. Compatibility is “works with any 
    )
    ```
 
-4. **Import the module** from `jstdata/workflows/__init__.py` so it registers (same pattern as `console`).
+4. **Import the module** from `jstdata/workflows/__init__.py` so it registers (same pattern as `console` / `discover`).
 5. **Implement the Textual `Screen`** so it mutates `session` only. When adding a resource, also call `app.remember_label(id, label)` so host UI can show names. Rely on host `s` / `f` / `e` for shared session/find/export UI; only declare step-local keys on `bindings` and implement matching `action_*` methods.
 
 Seed flags go on `arguments`. They configure the TUI; they do not replace interactive use.
@@ -87,10 +87,10 @@ Seed flags go on `arguments`. They configure the TUI; they do not replace intera
 |------|---------|
 | List steps | `jst steps` / `jst steps --json` |
 | Describe one step | `jst step <id>` / `jst step <id> --json` |
-| Run alone | `jst run console` |
+| Run alone | `jst run console` / `jst run discover --mode union` |
 | Preload session JSON | `jst run --session path.json console` |
 | Set default export path | `jst run --output out.json console` |
-| Chain steps | `jst run selector --industry semis : console` |
+| Chain steps | `jst run console --taxonomy country : discover --mode union` |
 | Inside the TUI | `s` session · `f` find · `e` export · `n`/`p` navigate · `?` step keys · `q` quit |
 
 There is **no in-UI “load session” picker**. To reload, quit, recall the command from shell history, and add `--session`.

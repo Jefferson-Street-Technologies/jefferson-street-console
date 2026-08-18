@@ -30,16 +30,24 @@ def test_console_is_registered():
     assert "console" in ids
     console = get_step("console")
     assert console.name == "Console"
-    assert console.to_dict()["example"] == "jst run console --taxonomy sec-central-index-key"
+    assert console.to_dict()["example"] == (
+        "jst run console --taxonomy sec-central-index-key --resource-type entity"
+    )
     assert any(b["key"] == "i" for b in console.to_dict()["bindings"])
     assert any(a["name"] == "taxonomy" for a in console.to_dict()["arguments"])
+    resource_type = next(
+        a for a in console.to_dict()["arguments"] if a["name"] == "resource_type"
+    )
+    assert resource_type["flag"] == "--resource-type"
+    assert resource_type["choices"] == ["series", "metric", "entity"]
 
 
 def test_format_step_help_console():
     text = format_step_help(get_step("console"))
     assert "Console" in text
-    assert "jst run console --taxonomy sec-central-index-key" in text
+    assert "jst run console --taxonomy sec-central-index-key --resource-type entity" in text
     assert "--taxonomy" in text
+    assert "--resource-type" in text
     assert "Keybindings:" in text
     assert "inspect" in text.lower()
 
@@ -104,6 +112,23 @@ def test_resolve_pipeline_console_taxonomy():
     assert len(resolved) == 1
     assert resolved[0].spec.id == "console"
     assert resolved[0].kwargs == {"taxonomy": "sec-central-index-key"}
+
+
+def test_resolve_pipeline_console_resource_type():
+    resolved = resolve_pipeline(["console", "--resource-type", "entity"])
+    assert resolved[0].kwargs == {"resource_type": "entity"}
+    both = resolve_pipeline(
+        [
+            "console",
+            "--taxonomy",
+            "country",
+            "--resource-type",
+            "metric",
+        ]
+    )
+    assert both[0].kwargs == {"taxonomy": "country", "resource_type": "metric"}
+    with pytest.raises(PipelineError, match="Choices"):
+        resolve_pipeline(["console", "--resource-type", "observation"])
 
 
 def test_resolve_pipeline_unknown_step():

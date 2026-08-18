@@ -138,6 +138,7 @@ def test_steps_list(runner):
     result = runner.invoke(cli, ["steps"])
     assert result.exit_code == 0
     assert "console" in result.output
+    assert "discover" in result.output
 
 
 def test_steps_json(runner):
@@ -147,6 +148,7 @@ def test_steps_json(runner):
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert any(s["id"] == "console" for s in data)
+    assert any(s["id"] == "discover" for s in data)
 
 
 def test_step_help(runner):
@@ -154,6 +156,15 @@ def test_step_help(runner):
     assert result.exit_code == 0
     assert "Console" in result.output
     assert "jst run console" in result.output
+    assert "--resource-type" in result.output
+
+
+def test_step_help_discover(runner):
+    result = runner.invoke(cli, ["step", "discover"])
+    assert result.exit_code == 0
+    assert "Discover" in result.output
+    assert "--mode" in result.output
+    assert "shift+enter" in result.output
 
 
 def test_step_json(runner):
@@ -164,6 +175,7 @@ def test_step_json(runner):
     data = json.loads(result.output)
     assert data["id"] == "console"
     assert any(a["name"] == "taxonomy" for a in data["arguments"])
+    assert any(a["name"] == "resource_type" for a in data["arguments"])
     assert any(b["key"] == "i" for b in data["bindings"])
 
 
