@@ -13,6 +13,7 @@ FREQ_TIEBREAK = ("Annual", "Quarterly", "Monthly", "Daily", "Intraday")
 _EIGHTHS = " ▁▂▃▄▅▆▇█"
 BAR_HEIGHT = 3
 LABEL_WIDTH = 12
+VALUE_WIDTH = 7
 
 
 def pick_frequency(series_list: Sequence[TimeSeries]) -> Optional[str]:
@@ -89,7 +90,7 @@ def downsample(
 
 
 def _column_stack(frac: Optional[float], height: int) -> list[str]:
-    """Top-to-bottom characters for one time column (no y-axis numbers)."""
+    """Top-to-bottom characters for one time column."""
     if frac is None or frac <= 0:
         return [" "] * height
     total = height * 8
@@ -125,6 +126,33 @@ def _label(text: str, width: int = LABEL_WIDTH) -> str:
     if len(text) <= width:
         return text.ljust(width)
     return text[: width - 1] + "…"
+
+
+def _trim(n: float, decimals: int = 2) -> str:
+    text = f"{n:.{decimals}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def format_compact(value: float) -> str:
+    """Short magnitude for the preview gutter (SI suffixes, no unit)."""
+    if value != value:  # NaN
+        return "—"
+    if value == 0:
+        return "0"
+    sign = "-" if value < 0 else ""
+    v = abs(value)
+    for thresh, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "k")):
+        if v >= thresh:
+            return sign + _trim(v / thresh) + suffix
+    if v >= 100:
+        return sign + _trim(v, 0)
+    if v >= 10:
+        return sign + _trim(v, 1)
+    if v >= 1:
+        return sign + _trim(v, 2)
+    return sign + _trim(v, 3)
 
 
 def _axis_line(
@@ -173,22 +201,26 @@ def render_preview(
     bar_width: int = 48,
     bar_height: int = BAR_HEIGHT,
 ) -> str:
-    """Shared-scale unicode bars, one small-multiple per entity."""
-    width = max(8, bar_width)
+    """Per-series unicode bars with that series' max in a right gutter.
+
+    Each small-multiple is scaled to its own range so a country with a
+    smaller magnitude still shows shape. The compact max is the y-axis:
+    the tallest bar in a row is that number.
+    """
+    plot_width = max(8, bar_width - VALUE_WIDTH - 2)
     binned: dict[str, list[tuple[datetime, Optional[float]]]] = {}
-    all_vals: list[Optional[float]] = []
+    series_max: dict[str, float] = {}
     all_stamps: list[datetime] = []
     for eid, ts in picked.items():
         if ts is None or not ts.observations:
             binned[eid] = []
             continue
-        points = downsample(ts.observations, width)
+        points = downsample(ts.observations, plot_width)
         binned[eid] = points
-        all_vals.extend(v for _, v in points)
+        raw = [o.value for o in ts.observations if o.value is not None]
+        if raw:
+            series_max[eid] = max(raw)
         all_stamps.extend(t for t, v in points if v is not None)
-
-    vmin, vmax = _scale(all_vals)
-    span = vmax - vmin or 1.0
 
     header_bits = [metric_name or "metric"]
     if frequency:
@@ -208,6 +240,8 @@ def render_preview(
             lines.append(f"{name} (no series)")
             lines.append("")
             continue
+        vmin, vmax = _scale(v for _, v in points)
+        span = vmax - vmin or 1.0
         columns = []
         for _, value in points:
             if value is None:
@@ -215,16 +249,27 @@ def render_preview(
             else:
                 frac = (value - vmin) / span
             columns.append(_column_stack(frac, bar_height))
+        peak = series_max.get(eid)
+        max_bit = (
+            format_compact(peak).rjust(VALUE_WIDTH) if peak is not None else ""
+        )
+        mid = bar_height // 2
         for row in range(bar_height):
-            prefix = name if row == bar_height // 2 else " " * LABEL_WIDTH
+            prefix = name if row == mid else " " * LABEL_WIDTH
+            value_col = max_bit if row == mid and max_bit else " " * VALUE_WIDTH
             bars = "".join(col[row] for col in columns)
-            lines.append(f"{prefix} {bars}")
+            lines.append(f"{prefix} {value_col} {bars}")
         lines.append("")
 
     if all_stamps:
-        # Use the longest binned series for tick alignment.
         longest = max(binned.values(), key=len) if binned else []
         stamps = [t for t, _ in longest] or sorted(all_stamps)
-        lines.append(_axis_line(stamps, min(width, len(stamps))))
+        lines.append(
+            _axis_line(
+                stamps,
+                min(plot_width, len(stamps)),
+                gutter=LABEL_WIDTH + 1 + VALUE_WIDTH + 1,
+            )
+        )
 
     return "\n".join(lines).rstrip() + "\n"

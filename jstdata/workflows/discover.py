@@ -20,7 +20,7 @@ from .base import StepArgument, StepBinding, StepSpec, label_for, register
 from .chart import LABEL_WIDTH, pick_frequency, pick_series_per_entity, render_preview
 
 PAGE_SIZE = 100
-PREVIEW_YEARS = 5
+PREVIEW_YEARS = 10
 MODES = ("union", "intersect")
 
 
@@ -48,7 +48,7 @@ class MetricRow(ListItem):
 
 
 class DiscoverScreen(Screen):
-    """Entities roster, candidate metrics, and a last-five-years bar preview."""
+    """Entities roster, candidate metrics, and a last-ten-years bar preview."""
 
     BINDINGS = [
         Binding("slash", "focus_filter", "Filter metrics", key_display="/"),
@@ -188,7 +188,7 @@ class DiscoverScreen(Screen):
                     yield Label("", id="metrics-status")
             with Vertical(classes="pane-container", id="preview-pane"):
                 yield Label(
-                    "PREVIEW // LAST 5 YEARS",
+                    "PREVIEW // LAST 10 YEARS",
                     classes="pane-header",
                     id="preview-header",
                 )
@@ -222,6 +222,7 @@ class DiscoverScreen(Screen):
             "[bold]enter[/bold] preview",
             "[bold]shift+enter[/bold] add",
             "[bold]tab[/bold] panes",
+            "[bold]j/k[/bold] move",
             "[bold]s[/bold] session",
             "[bold]f[/bold] find",
             "[bold]e[/bold] export",
@@ -316,9 +317,22 @@ class DiscoverScreen(Screen):
         else:
             self.query_one("#metrics-list", ListView).focus()
 
+    def _preview_is_focused(self) -> bool:
+        node = self.focused
+        while node is not None:
+            if getattr(node, "id", None) == "preview-scroll":
+                return True
+            node = getattr(node, "parent", None)
+        return False
+
     def action_cursor_down(self) -> None:
         focused = self.focused
         if isinstance(focused, Input):
+            return
+        if self._preview_is_focused():
+            self.query_one("#preview-scroll", ScrollableContainer).scroll_relative(
+                y=1, animate=False
+            )
             return
         if focused and hasattr(focused, "action_cursor_down"):
             focused.action_cursor_down()
@@ -326,6 +340,11 @@ class DiscoverScreen(Screen):
     def action_cursor_up(self) -> None:
         focused = self.focused
         if isinstance(focused, Input):
+            return
+        if self._preview_is_focused():
+            self.query_one("#preview-scroll", ScrollableContainer).scroll_relative(
+                y=-1, animate=False
+            )
             return
         if focused and hasattr(focused, "action_cursor_up"):
             focused.action_cursor_up()
@@ -414,7 +433,7 @@ class DiscoverScreen(Screen):
             return
         frequency = pick_frequency(series_list)
         if not frequency:
-            chart.update("No observations in the last 5 years.")
+            chart.update("No observations in the last 10 years.")
             return
         picked = pick_series_per_entity(series_list, self.session.entity, frequency)
         units = next(
@@ -460,7 +479,7 @@ DISCOVER = register(
             StepBinding(
                 "enter",
                 "preview",
-                "Preview last 5 years for the highlighted metric",
+                "Preview last 10 years for the highlighted metric",
             ),
             StepBinding(
                 "shift+enter", "add_metric", "Add highlighted metric to the session"
@@ -468,6 +487,7 @@ DISCOVER = register(
             StepBinding(
                 "tab", "cycle_panes", "Switch focus between metrics and preview"
             ),
+            StepBinding("j / k", "cursor", "Move metric highlight or scroll preview"),
             StepBinding("escape", "leave_filter", "Leave the metric filter"),
         ),
         example="jst run console --taxonomy country : discover --mode union",

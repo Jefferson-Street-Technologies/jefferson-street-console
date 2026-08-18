@@ -6,6 +6,7 @@ from jstdata.models import Entity, Observation, Series, TimeSeries
 from jstdata.workflows.base import PipelineError, get_step, resolve_pipeline
 from jstdata.workflows.chart import (
     downsample,
+    format_compact,
     pick_frequency,
     pick_series_per_entity,
     render_preview,
@@ -80,7 +81,16 @@ def test_downsample_bins_long_series():
     assert all(v is not None for _, v in points)
 
 
-def test_render_preview_has_time_and_entities_not_y_ticks():
+def test_format_compact_uses_si_suffixes():
+    assert format_compact(0) == "0"
+    assert format_compact(4.0) == "4"
+    assert format_compact(1.5) == "1.5"
+    assert format_compact(1.11e12) == "1.11T"
+    assert format_compact(27.36e12) == "27.36T"
+    assert format_compact(-847e9) == "-847B"
+
+
+def test_render_preview_has_time_and_per_series_max():
     picked = {
         "fr": _ts("fr-a", "Annual", ["fr"], [1.0, 2.0, 4.0]),
         "de": _ts("de-a", "Annual", ["de"], [1.0, 1.5, 1.2]),
@@ -103,6 +113,33 @@ def test_render_preview_has_time_and_entities_not_y_ticks():
     assert "2020" in text
     assert " |\n" not in text
     assert "4.0 |" not in text
+    assert format_compact(4.0) in text
+    assert format_compact(1.5) in text
+
+
+def test_render_preview_scales_each_series_to_its_own_max():
+    picked = {
+        "us": _ts("us-a", "Annual", ["us"], [20.0, 27.0], units="USD"),
+        "sa": _ts("sa-a", "Annual", ["sa"], [0.8, 1.1], units="USD"),
+    }
+    text = render_preview(
+        "gdp",
+        "Annual",
+        "USD",
+        {"us": "United States", "sa": "Saudi Arabia"},
+        picked,
+        bar_width=32,
+        bar_height=3,
+    )
+    rows = [line for line in text.splitlines() if "█" in line]
+    assert len(rows) >= 2
+    # Own-max scale: the smaller series still reaches a full block.
+    us_block = next(line for line in text.splitlines() if "United" in line)
+    sa_block = next(line for line in text.splitlines() if "Saudi" in line)
+    assert "█" in us_block
+    assert "█" in sa_block
+    assert format_compact(27.0) in us_block
+    assert format_compact(1.1) in sa_block
 
 
 def test_discover_is_registered():
