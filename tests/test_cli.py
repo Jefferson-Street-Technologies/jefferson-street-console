@@ -189,3 +189,33 @@ def test_run_trailing_colon(runner):
     result = runner.invoke(cli, ["run", "console", ":"])
     assert result.exit_code == 2
     assert "Trailing" in result.output
+
+
+def test_metric_search_listing_and_entities(runner, mock_url):
+    with requests_mock.Mocker() as m:
+        m.get(
+            f"{mock_url}/search/metrics",
+            json={"records": [{"id": "gdp", "name": "GDP"}]},
+        )
+        result = runner.invoke(
+            cli,
+            [
+                "metric",
+                "search",
+                "--entity",
+                "france",
+                "--entity",
+                "germany",
+                "--mode",
+                "intersect",
+                "--limit",
+                "100",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        qs = m.request_history[-1].qs
+        assert "query" not in qs
+        assert qs["entity"] == ["france", "germany"]
+        assert qs["mode"] == ["intersect"]
+        assert qs["limit"] == ["100"]
+        assert "GDP" in result.output

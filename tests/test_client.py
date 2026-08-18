@@ -171,4 +171,52 @@ def test_search_entities_taxonomy(client, mock_url):
         m.get(f"{mock_url}/search/entities", json=mock_data)
         entities = client.search_entities("calif", taxonomy="us-state-or-territory")
         assert entities[0].id == "california"
-        assert m.request_history[-1].qs["taxonomy"] == ["us-state-or-territory"]
+        qs = m.request_history[-1].qs
+        assert qs["taxonomy"] == ["us-state-or-territory"]
+        assert qs["query"] == ["calif"]
+        assert "mode" not in qs
+
+
+def test_search_metrics_omits_blank_query(client, mock_url):
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/search/metrics", json={"records": []})
+        client.search_metrics("", entity="united-states", limit=100)
+        qs = m.request_history[-1].qs
+        assert "query" not in qs
+        assert qs["entity"] == ["united-states"]
+        assert qs["mode"] == ["union"]
+        assert qs["limit"] == ["100"]
+
+
+def test_search_metrics_multiple_entities_and_mode(client, mock_url):
+    mock_data = {"records": [{"id": "gdp", "name": "GDP"}]}
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/search/metrics", json=mock_data)
+        metrics = client.search_metrics(
+            entity=["france", "germany"],
+            mode="intersect",
+            limit=100,
+            offset=20,
+        )
+        assert metrics[0].id == "gdp"
+        qs = m.request_history[-1].qs
+        assert "query" not in qs
+        assert qs["entity"] == ["france", "germany"]
+        assert qs["mode"] == ["intersect"]
+        assert qs["offset"] == ["20"]
+
+
+def test_search_entities_multiple_metrics(client, mock_url):
+    mock_data = {"records": [{"id": "france", "label": "France"}]}
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/search/entities", json=mock_data)
+        entities = client.search_entities(
+            "paris",
+            metric=["gdp", "cpi"],
+            mode="union",
+        )
+        assert entities[0].id == "france"
+        qs = m.request_history[-1].qs
+        assert qs["query"] == ["paris"]
+        assert qs["metric"] == ["cpi", "gdp"] or qs["metric"] == ["gdp", "cpi"]
+        assert qs["mode"] == ["union"]

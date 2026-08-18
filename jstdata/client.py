@@ -31,6 +31,16 @@ class InvalidApiKeyError(Exception):
     pass
 
 
+def _as_id_list(value: Optional[Union[str, List[str]]]) -> Optional[List[str]]:
+    """Normalize a search/query id argument to a non-empty list."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [value] if value else None
+    items = [v for v in value if v]
+    return items or None
+
+
 class InvalidInputError(Exception):
     pass
 
@@ -329,40 +339,56 @@ class JSTDataClient:
 
     def search_entities(
         self,
-        query: str,
-        metric: Optional[str] = None,
+        query: Optional[str] = None,
+        metric: Optional[Union[str, List[str]]] = None,
         taxonomy: Optional[str] = None,
+        mode: str = "union",
         limit: int = 5,
         offset: int = 0,
     ) -> List[Entity]:
-        """Search for entities."""
-        params = {"query": query, "limit": limit, "offset": offset}
-        if metric:
-            params["metric"] = metric
+        """Search or list entities.
+
+        Omit ``query`` (or pass blank) to list the matching set in label order.
+        ``metric`` may be one id or many; ``mode`` is ``union`` or ``intersect``
+        when more than one metric is given.
+        """
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if query is not None and str(query).strip():
+            params["query"] = query
+        metrics = _as_id_list(metric)
+        if metrics:
+            params["metric"] = metrics
+            params["mode"] = mode
         if taxonomy:
             params["taxonomy"] = taxonomy
-        data = self.make_request(
-            "search/entities", params
-        )
+        data = self.make_request("search/entities", params)
         return [Entity.from_dict(e) for e in data["records"]]
 
     def search_metrics(
         self,
-        query: str,
-        entity: Optional[str] = None,
+        query: Optional[str] = None,
+        entity: Optional[Union[str, List[str]]] = None,
         taxonomy: Optional[str] = None,
+        mode: str = "union",
         limit: int = 5,
         offset: int = 0,
     ) -> List[Metric]:
-        """Search for metrics."""
-        params = {"query": query, "limit": limit, "offset": offset}
-        if entity:
-            params["entity"] = entity
+        """Search or list metrics.
+
+        Omit ``query`` (or pass blank) to list the matching set in name order.
+        ``entity`` may be one id or many; ``mode`` is ``union`` or ``intersect``
+        when more than one entity is given.
+        """
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if query is not None and str(query).strip():
+            params["query"] = query
+        entities = _as_id_list(entity)
+        if entities:
+            params["entity"] = entities
+            params["mode"] = mode
         if taxonomy:
             params["taxonomy"] = taxonomy
-        data = self.make_request(
-            "search/metrics", params
-        )
+        data = self.make_request("search/metrics", params)
         return [Metric.from_dict(m) for m in data["records"]]
 
     def search_series(

@@ -105,14 +105,29 @@ def show_metric(id, format):
     format_and_print(results, format)
 
 @metric.command("search")
-@click.argument("query")
+@click.argument("query", required=False, default=None)
 @click.option("--taxonomy", help="Restrict search to metrics with series in a taxonomy")
-@click.option("--entity", help="Restrict search to metrics associated with an entity")
+@click.option(
+    "--entity",
+    multiple=True,
+    help="Restrict to metrics associated with these entities. Repeatable.",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["union", "intersect"]),
+    default="union",
+    help="How to combine multiple --entity values",
+)
 @common_search_params
-def search_metrics(query, taxonomy, entity, limit, offset, format):
-    """Search for metrics by intent."""
+def search_metrics(query, taxonomy, entity, mode, limit, offset, format):
+    """Search for metrics by intent. Omit QUERY to list the matching set."""
     results = client.search_metrics(
-        query, entity=entity, taxonomy=taxonomy, limit=limit, offset=offset
+        query,
+        entity=list(entity) or None,
+        taxonomy=taxonomy,
+        mode=mode,
+        limit=limit,
+        offset=offset,
     )
     format_and_print(results, format)
 
@@ -139,14 +154,29 @@ def show_entity(id, format):
     format_and_print(results, format)
 
 @entity.command("search")
-@click.argument("query")
+@click.argument("query", required=False, default=None)
 @click.option("--taxonomy", help="Restrict search to entities in a taxonomy")
-@click.option("--metric", help="Restrict search to entities associated with a metric")
+@click.option(
+    "--metric",
+    multiple=True,
+    help="Restrict to entities associated with these metrics. Repeatable.",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["union", "intersect"]),
+    default="union",
+    help="How to combine multiple --metric values",
+)
 @common_search_params
-def search_entities(query, taxonomy, metric, limit, offset, format):
-    """Search for entities by intent."""
+def search_entities(query, taxonomy, metric, mode, limit, offset, format):
+    """Search for entities by intent. Omit QUERY to list the matching set."""
     results = client.search_entities(
-        query, metric=metric, taxonomy=taxonomy, limit=limit, offset=offset
+        query,
+        metric=list(metric) or None,
+        taxonomy=taxonomy,
+        mode=mode,
+        limit=limit,
+        offset=offset,
     )
     format_and_print(results, format)
 
