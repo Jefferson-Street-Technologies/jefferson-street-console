@@ -25,6 +25,7 @@ from .base import (
 )
 from . import console as _console  # noqa: F401  — registers console
 from . import discover as _discover  # noqa: F401  — registers discover
+from . import rank as _rank  # noqa: F401  — registers rank
 
 __all__ = [
     "PipelineError",

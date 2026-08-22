@@ -1,13 +1,13 @@
-"""Barebones terminal bar charts for the discover preview pane."""
+"""Barebones terminal bar charts for discover preview and rank boards."""
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from statistics import mean
-from typing import Iterable, Optional, Sequence
+from typing import AbstractSet, Iterable, Optional, Sequence
 
-from ..models import TimeSeries
+from ..models import Entity, TimeSeries
 
 FREQ_TIEBREAK = ("Annual", "Quarterly", "Monthly", "Daily", "Intraday")
 _EIGHTHS = " ▁▂▃▄▅▆▇█"
@@ -153,6 +153,88 @@ def format_compact(value: float) -> str:
     if v >= 1:
         return sign + _trim(v, 2)
     return sign + _trim(v, 3)
+
+
+def pick_entity(
+    entities: Sequence[Entity],
+    taxonomy_ids: Optional[AbstractSet[str]] = None,
+) -> Optional[Entity]:
+    """Prefer a taxonomy member when known; otherwise the first entity."""
+    if not entities:
+        return None
+    if taxonomy_ids:
+        for ent in entities:
+            if ent.id in taxonomy_ids:
+                return ent
+    return entities[0]
+
+
+def last_observation_value(ts: TimeSeries) -> Optional[float]:
+    """Chronologically last observation value on a series (rank key)."""
+    if not ts.observations:
+        return None
+    latest = max(
+        ts.observations,
+        key=lambda o: _as_naive(o.observation_timestamp),
+    )
+    return latest.value
+
+
+def last_observation_timestamp(ts: TimeSeries) -> Optional[datetime]:
+    if not ts.observations:
+        return None
+    latest = max(
+        ts.observations,
+        key=lambda o: _as_naive(o.observation_timestamp),
+    )
+    return _as_naive(latest.observation_timestamp)
+
+
+def shared_pane_max(values: Iterable[Optional[float]]) -> float:
+    """Positive ceiling for shared-scale bars (0 → pane max)."""
+    nums = [v for v in values if v is not None]
+    if not nums:
+        return 1.0
+    hi = max(nums)
+    if hi <= 0:
+        return 1.0
+    return hi
+
+
+def horizontal_bar(frac: float, width: int) -> str:
+    """One-line unicode bar; ``frac`` is 0..1 against a shared max."""
+    if width <= 0:
+        return ""
+    if frac is None or frac <= 0:
+        return " " * width
+    total = width * 8
+    filled = max(1, min(total, int(round(min(1.0, frac) * total))))
+    full, rem = divmod(filled, 8)
+    cells = ["█"] * full
+    if rem and len(cells) < width:
+        cells.append(_EIGHTHS[rem])
+    while len(cells) < width:
+        cells.append(" ")
+    return "".join(cells[:width])
+
+
+def format_rank_line(
+    rank: int,
+    name: str,
+    value: float,
+    pane_max: float,
+    bar_width: int,
+    name_width: int = 18,
+) -> str:
+    """One leaderboard row: rank, name, compact value, shared-scale bar."""
+    frac = (value / pane_max) if pane_max > 0 else 0.0
+    if value < 0:
+        frac = 0.0
+    return (
+        f"{rank:>3}  {_label(name, name_width)}  "
+        f"{format_compact(value).rjust(VALUE_WIDTH)}  "
+        f"{horizontal_bar(frac, bar_width)}"
+    )
 
 
 def _axis_line(
