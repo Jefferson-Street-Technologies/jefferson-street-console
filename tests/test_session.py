@@ -20,8 +20,10 @@ def test_to_query_kwargs_includes_filters():
     session = Session(
         metric=["gdp"],
         frequency="Annual",
+        taxonomy="country",
         tail=12,
         as_of="2020-03-01T00:00:00Z",
+        sort_by="value",
         order_by="desc",
         start_date="2020-01-01",
         end_date="2024-01-01",
@@ -29,8 +31,10 @@ def test_to_query_kwargs_includes_filters():
     assert session.to_query_kwargs() == {
         "metric": ["gdp"],
         "frequency": "Annual",
+        "taxonomy": "country",
         "tail": 12,
         "as_of": "2020-03-01T00:00:00Z",
+        "sort_by": "value",
         "order_by": "desc",
     }
 
@@ -111,7 +115,9 @@ def test_to_cli_and_to_python():
         metric=["gdp"],
         entity=["usa", "gbr"],
         frequency="Annual",
+        taxonomy="country",
         tail=20,
+        sort_by="value",
         start_date="2020-01-01",
     )
     cli = session.to_cli()
@@ -120,7 +126,9 @@ def test_to_cli_and_to_python():
     assert "--entity usa" in cli
     assert "--entity gbr" in cli
     assert "--frequency Annual" in cli
+    assert "--taxonomy country" in cli
     assert "--tail 20" in cli
+    assert "--sort-by value" in cli
     assert "--start-date" not in cli
     assert "order-by" not in cli
 
@@ -130,7 +138,9 @@ def test_to_cli_and_to_python():
     assert "metric=['gdp']" in py
     assert "entity=['usa', 'gbr']" in py
     assert "frequency='Annual'" in py
+    assert "taxonomy='country'" in py
     assert "tail=20" in py
+    assert "sort_by='value'" in py
     assert "start_date" not in py
 
 

@@ -107,6 +107,16 @@ df = client.query_df(
     tail=20,
 )
 
+# Rank a taxonomy population by latest value
+top = client.query(
+    metric="gross-domestic-product",
+    taxonomy="country",
+    frequency="Annual",
+    tail=1,
+    sort_by="value",
+    limit=50,
+)
+
 # Deep history for one series
 obs = client.get_series_observations("ABC123", start_date="2000-01-01")
 

@@ -109,9 +109,11 @@ def apply_loaded_session(target: Session, loaded: Session) -> None:
     target.entity = list(loaded.entity)
     target.series = list(loaded.series)
     target.frequency = loaded.frequency
+    target.taxonomy = loaded.taxonomy
     target.head = loaded.head
     target.tail = loaded.tail
     target.as_of = loaded.as_of
+    target.sort_by = loaded.sort_by
     target.start_date = loaded.start_date
     target.end_date = loaded.end_date
     target.start_time = loaded.start_time

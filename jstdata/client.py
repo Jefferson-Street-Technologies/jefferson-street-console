@@ -423,9 +423,11 @@ class JSTDataClient:
         entity: Optional[Union[str, List[str]]] = None,
         series: Optional[Union[str, List[str]]] = None,
         frequency: Optional[str] = None,
+        taxonomy: Optional[str] = None,
         head: Optional[int] = None,
         tail: Optional[int] = None,
         as_of: Optional[Union[str, datetime]] = None,
+        sort_by: Optional[str] = None,
         order_by: Optional[str] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
@@ -436,19 +438,28 @@ class JSTDataClient:
         ``tail`` defaults to ``DEFAULT_QUERY_TAIL``. Time ranges are not
         accepted here; use :meth:`get_series_observations` for history.
         ``limit`` / ``offset`` paginate series, not observations.
+
+        ``sort_by`` is ``id`` (default catalog order) or ``value`` (rank by
+        the chronologically last observation in each series' window,
+        descending). ``taxonomy`` restricts to series whose entities have an
+        identity relation to that taxonomy.
         """
         if head is not None and tail is not None:
             raise InvalidInputError("Provide exactly one of 'head' or 'tail'.")
         if head is None and tail is None:
             tail = DEFAULT_QUERY_TAIL
+        if sort_by is not None and sort_by not in ("id", "value"):
+            raise InvalidInputError("'sort_by' must be 'id' or 'value'.")
 
         params: Dict[str, Any] = {
             "metric": metric,
             "entity": entity,
             "series": series,
             "frequency": frequency,
+            "taxonomy": taxonomy,
             "head": head,
             "tail": tail,
+            "sort_by": sort_by,
             "order_by": order_by,
             "limit": limit,
             "offset": offset,

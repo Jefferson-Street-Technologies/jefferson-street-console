@@ -129,6 +129,11 @@ def test_query_rejects_head_and_tail(client):
         client.query(metric="gdp", head=10, tail=10)
 
 
+def test_query_rejects_invalid_sort_by(client):
+    with pytest.raises(InvalidInputError, match="sort_by"):
+        client.query(metric="gdp", sort_by="mean")
+
+
 def test_query_as_of(client, mock_url):
     mock_data = {"records": []}
     as_of = datetime(2020, 3, 1, tzinfo=timezone.utc)
@@ -138,6 +143,28 @@ def test_query_as_of(client, mock_url):
         qs = m.request_history[-1].qs
         assert qs["tail"] == ["1"]
         assert "as_of" in qs
+
+
+def test_query_sort_by_value_and_taxonomy(client, mock_url):
+    mock_data = {"records": []}
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/query", json=mock_data)
+        client.query(
+            metric="gdp",
+            taxonomy="country",
+            frequency="Annual",
+            tail=1,
+            sort_by="value",
+            limit=50,
+            offset=0,
+        )
+        qs = m.request_history[-1].qs
+        assert qs["taxonomy"] == ["country"]
+        assert qs["frequency"] == ["annual"]  # requests_mock lowercases values
+        assert qs["tail"] == ["1"]
+        assert qs["sort_by"] == ["value"]
+        assert qs["limit"] == ["50"]
+        assert qs["offset"] == ["0"]
 
 
 def test_query_df(client, mock_url):

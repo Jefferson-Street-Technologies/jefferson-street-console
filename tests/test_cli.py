@@ -136,6 +136,38 @@ def test_query_fuzzy_resolution(runner, mock_url):
         assert m.request_history[-1].qs["tail"] == ["20"]
 
 
+def test_query_sort_by_value_and_taxonomy(runner, mock_url):
+    mock_query_data = {"records": []}
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/query", json=mock_query_data)
+        result = runner.invoke(
+            cli,
+            [
+                "query",
+                "--metric",
+                "gdp",
+                "--taxonomy",
+                "country",
+                "--frequency",
+                "Annual",
+                "--tail",
+                "1",
+                "--sort-by",
+                "value",
+                "--limit",
+                "50",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        qs = m.request_history[-1].qs
+        assert qs["metric"] == ["gdp"]
+        assert qs["taxonomy"] == ["country"]
+        assert qs["frequency"] == ["annual"]  # requests_mock lowercases values
+        assert qs["tail"] == ["1"]
+        assert qs["sort_by"] == ["value"]
+        assert qs["limit"] == ["50"]
+
+
 def test_series_observations(runner, mock_url):
     mock_data = {
         "series_id": "ABC123",

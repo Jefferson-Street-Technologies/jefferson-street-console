@@ -298,9 +298,20 @@ def series_observations(
 @click.option("--entity", multiple=True, help="Entity ID(s) or keywords")
 @click.option("--series", multiple=True, help="Series ID(s) or keywords")
 @click.option("--frequency", type=click.Choice(["Annual", "Quarterly", "Monthly", "Daily", "Intraday"]))
+@click.option(
+    "--taxonomy",
+    help="Restrict to series whose entities have an identity relation to this taxonomy",
+)
 @click.option("--head", type=int, help="Earliest N observations per series")
 @click.option("--tail", type=int, help="Latest N observations per series (default 20)")
 @click.option("--as-of", "as_of", help="Timezone-aware ISO-8601 cutoff (release_timestamp)")
+@click.option(
+    "--sort-by",
+    "sort_by",
+    type=click.Choice(["id", "value"]),
+    default="id",
+    help="Order series by id (default) or by last value in the window (desc)",
+)
 @click.option("--fuzzy", is_flag=True, default=True, help="Try to resolve keywords to IDs automatically")
 @click.option(
     "--limit",
@@ -314,13 +325,26 @@ def series_observations(
     help="Output format. Valid formats are: json, csv, pretty.",
 )
 def query(
-    metric, entity, series, frequency, head, tail, as_of, fuzzy, limit, offset, format
+    metric,
+    entity,
+    series,
+    frequency,
+    taxonomy,
+    head,
+    tail,
+    as_of,
+    sort_by,
+    fuzzy,
+    limit,
+    offset,
+    format,
 ):
     """
     Bounded cross-sectional query. Mix metrics, entities, and series.
 
     Uses head/tail per series (not a date window). For deep history of one
-    series, use `jst series observations`.
+    series, use `jst series observations`. Use --sort-by value with
+    --taxonomy to rank a population (e.g. country GDP).
     """
     m_ids = list(metric)
     e_ids = list(entity)
@@ -336,9 +360,11 @@ def query(
         entity=e_ids or None,
         series=s_ids or None,
         frequency=frequency,
+        taxonomy=taxonomy,
         head=head,
         tail=tail,
         as_of=as_of,
+        sort_by=sort_by,
         limit=limit,
         offset=offset,
     )

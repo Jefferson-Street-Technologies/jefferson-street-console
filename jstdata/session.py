@@ -30,9 +30,11 @@ class Session:
     entity: list[str] = field(default_factory=list)
     series: list[str] = field(default_factory=list)
     frequency: Optional[str] = None
+    taxonomy: Optional[str] = None
     head: Optional[int] = None
     tail: Optional[int] = None
     as_of: Optional[str] = None
+    sort_by: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     start_time: Optional[int] = None
@@ -61,12 +63,16 @@ class Session:
             kwargs["series"] = list(self.series)
         if self.frequency is not None:
             kwargs["frequency"] = self.frequency
+        if self.taxonomy is not None:
+            kwargs["taxonomy"] = self.taxonomy
         if self.head is not None:
             kwargs["head"] = self.head
         if self.tail is not None:
             kwargs["tail"] = self.tail
         if self.as_of is not None:
             kwargs["as_of"] = self.as_of
+        if self.sort_by is not None:
+            kwargs["sort_by"] = self.sort_by
         if self.order_by is not None:
             kwargs["order_by"] = self.order_by
         return kwargs
@@ -98,9 +104,11 @@ class Session:
             entity=list(entity or []),
             series=list(series or []),
             frequency=data.get("frequency"),
+            taxonomy=data.get("taxonomy"),
             head=data.get("head"),
             tail=data.get("tail"),
             as_of=data.get("as_of"),
+            sort_by=data.get("sort_by"),
             start_date=data.get("start_date"),
             end_date=data.get("end_date"),
             start_time=data.get("start_time"),
@@ -180,12 +188,16 @@ class Session:
             parts.append(f"--series {s}")
         if self.frequency:
             parts.append(f"--frequency {self.frequency}")
+        if self.taxonomy:
+            parts.append(f"--taxonomy {self.taxonomy}")
         if self.head is not None:
             parts.append(f"--head {self.head}")
         if self.tail is not None:
             parts.append(f"--tail {self.tail}")
         if self.as_of:
             parts.append(f"--as-of {self.as_of}")
+        if self.sort_by:
+            parts.append(f"--sort-by {self.sort_by}")
         return " ".join(parts)
 
     def to_python(self) -> str:
