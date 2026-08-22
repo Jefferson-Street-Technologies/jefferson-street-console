@@ -78,8 +78,11 @@ The "Telescope" for your data. Launch an interactive workbench for high-density 
 A "pipe-friendly" interface designed for automation and quick extraction.
 
 ```bash
-# Fuzzy query by intent
-jst query --metric inflation --entity "United States" --frequency Monthly
+# Fuzzy query by intent (latest 20 observations per series)
+jst query --metric inflation --entity "United States" --frequency Monthly --tail 20
+
+# Deep history for one known series
+jst series observations ABC123 --start-date 2000-01-01 --limit 1000
 
 # Explore the entity graph
 jst entity relations usa --format pretty
@@ -97,12 +100,15 @@ from jstdata import JSTDataClient
 
 client = JSTDataClient()
 
-# High-performance DataFrame extraction
+# Cross-sectional observations (bounded per series)
 df = client.query_df(
     metric="gross-domestic-product",
     entity=["usa", "gbr"],
-    start_date="2020-01-01"
+    tail=20,
 )
+
+# Deep history for one series
+obs = client.get_series_observations("ABC123", start_date="2000-01-01")
 
 # Semantic exploration
 series = client.get_entity_series("apple-inc")

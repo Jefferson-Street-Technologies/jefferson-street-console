@@ -1,7 +1,8 @@
 import hashlib
 import json
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -22,6 +23,11 @@ from .models import (
 APP_DIR = Path.home() / ".jstdata"
 CONFIG_FILE = APP_DIR / "config.json"
 
+DEFAULT_QUERY_TAIL = 20
+DEFAULT_QUERY_SERIES_LIMIT = 50
+MAX_QUERY_SERIES_LIMIT = 50
+MAX_QUERY_OBSERVATION_DEPTH = 100
+
 
 class ApiKeyNotSetError(Exception):
     pass
@@ -39,6 +45,15 @@ def _as_id_list(value: Optional[Union[str, List[str]]]) -> Optional[List[str]]:
         return [value] if value else None
     items = [v for v in value if v]
     return items or None
+
+
+def _format_as_of(value: Union[str, datetime]) -> str:
+    """ISO-8601 timestamp; naive datetimes are treated as UTC."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
+    return str(value)
 
 
 class InvalidInputError(Exception):
@@ -408,6 +423,46 @@ class JSTDataClient:
         entity: Optional[Union[str, List[str]]] = None,
         series: Optional[Union[str, List[str]]] = None,
         frequency: Optional[str] = None,
+        head: Optional[int] = None,
+        tail: Optional[int] = None,
+        as_of: Optional[Union[str, datetime]] = None,
+        order_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[TimeSeries]:
+        """Bounded cross-sectional observations (``GET /query``).
+
+        Exactly one of ``head`` or ``tail`` is sent. If neither is given,
+        ``tail`` defaults to ``DEFAULT_QUERY_TAIL``. Time ranges are not
+        accepted here; use :meth:`get_series_observations` for history.
+        ``limit`` / ``offset`` paginate series, not observations.
+        """
+        if head is not None and tail is not None:
+            raise InvalidInputError("Provide exactly one of 'head' or 'tail'.")
+        if head is None and tail is None:
+            tail = DEFAULT_QUERY_TAIL
+
+        params: Dict[str, Any] = {
+            "metric": metric,
+            "entity": entity,
+            "series": series,
+            "frequency": frequency,
+            "head": head,
+            "tail": tail,
+            "order_by": order_by,
+            "limit": limit,
+            "offset": offset,
+        }
+        if as_of is not None:
+            params["as_of"] = _format_as_of(as_of)
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = self.make_request("query", params)
+        return [TimeSeries.from_dict(record) for record in data.get("records", [])]
+
+    def get_series_observations(
+        self,
+        series_id: str,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         start_time: Optional[int] = None,
@@ -415,29 +470,24 @@ class JSTDataClient:
         order_by: Optional[str] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-    ) -> List[TimeSeries]:
-        """
-        Query for observations. This is the main data extraction method.
-        """
-        params = {
-            "metric": metric,
-            "entity": entity,
-            "series": series,
-            "frequency": frequency,
+    ) -> List[Observation]:
+        """Paginated history for one series (``GET /series/{id}/observations``)."""
+        params: Dict[str, Any] = {
             "start_date": start_date,
             "end_date": end_date,
-            "order_by": order_by,
             "start_time": start_time,
             "end_time": end_time,
+            "order_by": order_by,
             "limit": limit,
             "offset": offset,
         }
-        # Filter out None values
         params = {k: v for k, v in params.items() if v is not None}
-
-        data = self.make_request("query", params)
-        series = [TimeSeries.from_dict(record) for record in data.get("records", [])]
-        return series
+        data = self.make_request(f"series/{series_id}/observations", params)
+        sid = data.get("series_id", series_id)
+        return [
+            Observation.from_dict(dict(o, series_id=sid))
+            for o in data.get("observations", [])
+        ]
 
     def get_resources(self, resource: Union[str, List[str]]) -> List[Resource]:
         """Get details for a specific metric."""
@@ -447,17 +497,30 @@ class JSTDataClient:
             records.append(Resource(id=r["id"], label=r["label"]))
         return records
 
-
     def query_df(self, **kwargs) -> pd.DataFrame:
-        """
-        Convenience method that returns the query results as a single flattened pandas DataFrame.
-        Excellent for notebook usage.
-        """
-        observations = self.query(**kwargs)
-        if not observations:
-            return pd.DataFrame()
-
-        df = pd.DataFrame([asdict(o) for o in observations])
+        """Flatten ``query`` results to one row per observation."""
+        results = self.query(**kwargs)
+        rows: List[Dict[str, Any]] = []
+        for ts in results:
+            entity_id = ",".join(e.id for e in ts.series.entities)
+            for obs in ts.observations:
+                rows.append(
+                    {
+                        "series_id": ts.series.id,
+                        "series_label": ts.series.label,
+                        "metric_id": ts.series.metric_id,
+                        "entity_id": entity_id,
+                        "frequency": ts.series.frequency,
+                        "units": ts.series.units,
+                        "source": ts.series.source,
+                        "observation_timestamp": obs.observation_timestamp,
+                        "release_timestamp": obs.release_timestamp,
+                        "value": obs.value,
+                    }
+                )
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return df
         df["observation_timestamp"] = pd.to_datetime(df["observation_timestamp"])
         df["release_timestamp"] = pd.to_datetime(df["release_timestamp"])
         return df

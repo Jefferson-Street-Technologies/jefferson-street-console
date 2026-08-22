@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, timedelta
 from typing import Optional
 
 from textual import on, work
@@ -19,8 +18,8 @@ from ..session import Session
 from .base import StepArgument, StepBinding, StepSpec, label_for, register
 from .chart import LABEL_WIDTH, pick_frequency, pick_series_per_entity, render_preview
 
-PAGE_SIZE = 100
-PREVIEW_YEARS = 10
+PAGE_SIZE = 20
+PREVIEW_TAIL = 20
 MODES = ("union", "intersect")
 
 
@@ -48,7 +47,7 @@ class MetricRow(ListItem):
 
 
 class DiscoverScreen(Screen):
-    """Entities roster, candidate metrics, and a last-ten-years bar preview."""
+    """Entities roster, candidate metrics, and a recent-observation bar preview."""
 
     BINDINGS = [
         Binding("slash", "focus_filter", "Filter metrics", key_display="/"),
@@ -188,7 +187,7 @@ class DiscoverScreen(Screen):
                     yield Label("", id="metrics-status")
             with Vertical(classes="pane-container", id="preview-pane"):
                 yield Label(
-                    "PREVIEW // LAST 10 YEARS",
+                    "PREVIEW // LAST 20 OBS",
                     classes="pane-header",
                     id="preview-header",
                 )
@@ -420,20 +419,19 @@ class DiscoverScreen(Screen):
             return
         header.update(f"PREVIEW // {metric.name}")
         chart.update("Loading observations…")
-        start = (date.today() - timedelta(days=365 * PREVIEW_YEARS)).isoformat()
         try:
             series_list: list[TimeSeries] = await asyncio.to_thread(
                 self.client.query,
                 metric=metric.id,
                 entity=list(self.session.entity),
-                start_date=start,
+                tail=PREVIEW_TAIL,
             )
         except Exception as e:
             chart.update(f"Preview failed: {e}")
             return
         frequency = pick_frequency(series_list)
         if not frequency:
-            chart.update("No observations in the last 10 years.")
+            chart.update("No observations in the preview window.")
             return
         picked = pick_series_per_entity(series_list, self.session.entity, frequency)
         units = next(
@@ -479,7 +477,7 @@ DISCOVER = register(
             StepBinding(
                 "enter",
                 "preview",
-                "Preview last 10 years for the highlighted metric",
+                "Preview the latest observations for the highlighted metric",
             ),
             StepBinding(
                 "shift+enter", "add_metric", "Add highlighted metric to the session"

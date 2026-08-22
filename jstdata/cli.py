@@ -262,6 +262,35 @@ def search_series(query, limit, offset, format):
     results = client.search_series(query, limit=limit, offset=offset)
     format_and_print(results, format)
 
+@series.command("observations")
+@click.argument("id")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option("--start-time", type=int, help="Start time (unix timestamp)")
+@click.option("--end-time", type=int, help="End time (unix timestamp)")
+@click.option(
+    "--order-by",
+    type=click.Choice(["asc", "desc"]),
+    default="asc",
+    help="Sort observations by timestamp",
+)
+@common_params
+def series_observations(
+    id, start_date, end_date, start_time, end_time, order_by, limit, offset, format
+):
+    """Paginated history for one series."""
+    results = client.get_series_observations(
+        id,
+        start_date=start_date,
+        end_date=end_date,
+        start_time=start_time,
+        end_time=end_time,
+        order_by=order_by,
+        limit=limit,
+        offset=offset,
+    )
+    format_and_print(results, format)
+
 # --- Query Command ---
 
 @cli.command()
@@ -269,15 +298,29 @@ def search_series(query, limit, offset, format):
 @click.option("--entity", multiple=True, help="Entity ID(s) or keywords")
 @click.option("--series", multiple=True, help="Series ID(s) or keywords")
 @click.option("--frequency", type=click.Choice(["Annual", "Quarterly", "Monthly", "Daily", "Intraday"]))
-@click.option("--start-date", help="Start date (YYYY-MM-DD)")
-@click.option("--end-date", help="End date (YYYY-MM-DD)")
-@click.option("--start-time", help="Start time (unix timestamp)")
-@click.option("--end-time", help="End time (unix timestamp)")
+@click.option("--head", type=int, help="Earliest N observations per series")
+@click.option("--tail", type=int, help="Latest N observations per series (default 20)")
+@click.option("--as-of", "as_of", help="Timezone-aware ISO-8601 cutoff (release_timestamp)")
 @click.option("--fuzzy", is_flag=True, default=True, help="Try to resolve keywords to IDs automatically")
-@common_params
-def query(metric, entity, series, frequency, start_date, end_date, start_time, end_time, fuzzy, limit, offset, format):
+@click.option(
+    "--limit",
+    default=50,
+    help="Maximum number of series to return (default: 50, max: 50)",
+)
+@click.option("--offset", default=0, help="Number of series to skip (default: 0)")
+@click.option(
+    "--format",
+    default="pretty",
+    help="Output format. Valid formats are: json, csv, pretty.",
+)
+def query(
+    metric, entity, series, frequency, head, tail, as_of, fuzzy, limit, offset, format
+):
     """
-    The unified query engine. Mix and match metrics, entities, and series.
+    Bounded cross-sectional query. Mix metrics, entities, and series.
+
+    Uses head/tail per series (not a date window). For deep history of one
+    series, use `jst series observations`.
     """
     m_ids = list(metric)
     e_ids = list(entity)
@@ -293,10 +336,9 @@ def query(metric, entity, series, frequency, start_date, end_date, start_time, e
         entity=e_ids or None,
         series=s_ids or None,
         frequency=frequency,
-        start_date=start_date,
-        end_date=end_date,
-        start_time=start_time,
-        end_time=end_time,
+        head=head,
+        tail=tail,
+        as_of=as_of,
         limit=limit,
         offset=offset,
     )

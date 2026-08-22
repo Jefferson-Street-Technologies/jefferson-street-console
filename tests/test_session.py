@@ -20,15 +20,17 @@ def test_to_query_kwargs_includes_filters():
     session = Session(
         metric=["gdp"],
         frequency="Annual",
+        tail=12,
+        as_of="2020-03-01T00:00:00Z",
+        order_by="desc",
         start_date="2020-01-01",
         end_date="2024-01-01",
-        order_by="desc",
     )
     assert session.to_query_kwargs() == {
         "metric": ["gdp"],
         "frequency": "Annual",
-        "start_date": "2020-01-01",
-        "end_date": "2024-01-01",
+        "tail": 12,
+        "as_of": "2020-03-01T00:00:00Z",
         "order_by": "desc",
     }
 
@@ -68,6 +70,7 @@ def test_round_trip_save_load(tmp_path: Path):
         metric=["gdp"],
         entity=["usa"],
         frequency="Annual",
+        tail=20,
         start_date="2010-01-01",
     )
     original.save(path)
@@ -108,6 +111,7 @@ def test_to_cli_and_to_python():
         metric=["gdp"],
         entity=["usa", "gbr"],
         frequency="Annual",
+        tail=20,
         start_date="2020-01-01",
     )
     cli = session.to_cli()
@@ -116,7 +120,8 @@ def test_to_cli_and_to_python():
     assert "--entity usa" in cli
     assert "--entity gbr" in cli
     assert "--frequency Annual" in cli
-    assert "--start-date 2020-01-01" in cli
+    assert "--tail 20" in cli
+    assert "--start-date" not in cli
     assert "order-by" not in cli
 
     py = session.to_python()
@@ -125,6 +130,8 @@ def test_to_cli_and_to_python():
     assert "metric=['gdp']" in py
     assert "entity=['usa', 'gbr']" in py
     assert "frequency='Annual'" in py
+    assert "tail=20" in py
+    assert "start_date" not in py
 
 
 def test_to_python_empty_session():

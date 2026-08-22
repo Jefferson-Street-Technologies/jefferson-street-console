@@ -6,7 +6,7 @@ Guidance for humans and agents extending the interactive CLI.
 
 `jstdata` centers on three ideas:
 
-1. **Session** — portable analytical intent (`metric` / `entity` / `series` + filters). Mirrors `JSTDataClient.query` parameters. No observations; can execute, export CSV, or render Python/CLI snippets. **Source of truth** for what is staged.
+1. **Session** — portable analytical intent (`metric` / `entity` / `series` + `head`/`tail`/`as_of`). Mirrors `JSTDataClient.query` parameters. No observations; can execute, export CSV, or render Python/CLI snippets. **Source of truth** for what is staged. Deep history uses `GET /series/{id}/observations`, not `/query` date windows.
 2. **Step** — a self-describing interactive TUI that edits a shared `Session`. Steps are order-agnostic: any step must accept an empty or arbitrary session.
 3. **Host** — `WorkflowHost` runs one process over a pipeline of steps. It owns the session for the lifetime of the run, plus a UI-only `labels: dict[id, str]` cache (hydrated from the API; never persisted). Universal UI every step gets for free:
    - `s` session modal (list / remove / inspect API JSON)

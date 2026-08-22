@@ -70,11 +70,19 @@ def test_load_session_or_empty(tmp_path: Path):
 
 def test_apply_loaded_session():
     target = Session(metric=["old"])
-    loaded = Session(metric=["gdp"], entity=["usa"], frequency="Annual")
+    loaded = Session(
+        metric=["gdp"],
+        entity=["usa"],
+        frequency="Annual",
+        tail=12,
+        as_of="2020-03-01T00:00:00Z",
+    )
     apply_loaded_session(target, loaded)
     assert target.metric == ["gdp"]
     assert target.entity == ["usa"]
     assert target.frequency == "Annual"
+    assert target.tail == 12
+    assert target.as_of == "2020-03-01T00:00:00Z"
 
 
 def test_unknown_step_raises():

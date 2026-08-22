@@ -30,6 +30,9 @@ class Session:
     entity: list[str] = field(default_factory=list)
     series: list[str] = field(default_factory=list)
     frequency: Optional[str] = None
+    head: Optional[int] = None
+    tail: Optional[int] = None
+    as_of: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     start_time: Optional[int] = None
@@ -45,7 +48,10 @@ class Session:
         return [*self.metric, *self.entity, *self.series]
 
     def to_query_kwargs(self) -> dict[str, Any]:
-        """kwargs suitable for ``JSTDataClient.query`` / ``query_df``."""
+        """kwargs suitable for ``JSTDataClient.query`` / ``query_df``.
+
+        Date/time fields are ignored: ``/query`` is head/tail/as_of only.
+        """
         kwargs: dict[str, Any] = {}
         if self.metric:
             kwargs["metric"] = list(self.metric)
@@ -55,14 +61,12 @@ class Session:
             kwargs["series"] = list(self.series)
         if self.frequency is not None:
             kwargs["frequency"] = self.frequency
-        if self.start_date is not None:
-            kwargs["start_date"] = self.start_date
-        if self.end_date is not None:
-            kwargs["end_date"] = self.end_date
-        if self.start_time is not None:
-            kwargs["start_time"] = self.start_time
-        if self.end_time is not None:
-            kwargs["end_time"] = self.end_time
+        if self.head is not None:
+            kwargs["head"] = self.head
+        if self.tail is not None:
+            kwargs["tail"] = self.tail
+        if self.as_of is not None:
+            kwargs["as_of"] = self.as_of
         if self.order_by is not None:
             kwargs["order_by"] = self.order_by
         return kwargs
@@ -78,6 +82,8 @@ class Session:
 
         Accepts both query-param names (``metric``/``entity``) and the
         older plural keys (``metrics``/``entities``) used by early saves.
+        Date windows from older sessions are preserved but not sent to
+        ``/query``.
         """
         metric = data.get("metric")
         if metric is None:
@@ -92,6 +98,9 @@ class Session:
             entity=list(entity or []),
             series=list(series or []),
             frequency=data.get("frequency"),
+            head=data.get("head"),
+            tail=data.get("tail"),
+            as_of=data.get("as_of"),
             start_date=data.get("start_date"),
             end_date=data.get("end_date"),
             start_time=data.get("start_time"),
@@ -171,14 +180,12 @@ class Session:
             parts.append(f"--series {s}")
         if self.frequency:
             parts.append(f"--frequency {self.frequency}")
-        if self.start_date:
-            parts.append(f"--start-date {self.start_date}")
-        if self.end_date:
-            parts.append(f"--end-date {self.end_date}")
-        if self.start_time is not None:
-            parts.append(f"--start-time {self.start_time}")
-        if self.end_time is not None:
-            parts.append(f"--end-time {self.end_time}")
+        if self.head is not None:
+            parts.append(f"--head {self.head}")
+        if self.tail is not None:
+            parts.append(f"--tail {self.tail}")
+        if self.as_of:
+            parts.append(f"--as-of {self.as_of}")
         return " ".join(parts)
 
     def to_python(self) -> str:

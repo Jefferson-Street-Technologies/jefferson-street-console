@@ -1,14 +1,15 @@
 import pytest
 import requests
 import requests_mock
-from datetime import datetime
+from datetime import datetime, timezone
 
 from jstdata.client import (
     ApiKeyNotSetError,
     InvalidApiKeyError,
+    InvalidInputError,
     JSTDataClient
 )
-from jstdata.models import Series, Entity, Metric, Observation, Taxonomy
+from jstdata.models import Series, Entity, Metric, Observation, Taxonomy, TimeSeries
 
 
 @pytest.fixture
@@ -74,31 +75,41 @@ def test_get_series(client, mock_url):
         assert series.entities[0].id == "usa"
 
 
-def test_query(client, mock_url):
-    """Test query method."""
-    mock_data = {
-        "records": [
+def _query_record():
+    return {
+        "id": "ABC123",
+        "label": "GDP USA",
+        "frequency": "Quarterly",
+        "source": "BEA",
+        "units": "USD",
+        "seasonal_adjustment": "",
+        "last_updated": "2024-01-01T00:00:00",
+        "metric_id": "gdp",
+        "entities": [{"id": "usa", "label": "USA"}],
+        "observations": [
             {
-                "series_id": "ABC123",
-                "entities": ["usa"],
-                "observations": [
-                    {
-                        "observation_timestamp": "2024-01-01T00:00:00",
-                        "release_timestamp": "2024-01-01T00:00:00",
-                        "value": 100.0
-                    }
-                ]
+                "observation_timestamp": "2024-01-01T00:00:00",
+                "release_timestamp": "2024-01-01T00:00:00",
+                "value": 100.0,
             }
-        ]
+        ],
     }
+
+
+def test_query(client, mock_url):
+    """Test query method defaults to tail and returns TimeSeries."""
+    mock_data = {"records": [_query_record()]}
     with requests_mock.Mocker() as m:
         m.get(f"{mock_url}/query", json=mock_data)
         results = client.query(metric="gdp", entity="usa")
         assert len(results) == 1
-        assert isinstance(results[0], Observation)
-        assert results[0].value == 100.0
-        assert results[0].series_id == "ABC123"
-        assert results[0].entity_id == "usa"
+        assert isinstance(results[0], TimeSeries)
+        assert results[0].series.id == "ABC123"
+        assert results[0].observations[0].value == 100.0
+        qs = m.request_history[-1].qs
+        assert qs["tail"] == ["20"]
+        assert "head" not in qs
+        assert "start_date" not in qs
 
 
 def test_query_limit_offset(client, mock_url):
@@ -107,27 +118,31 @@ def test_query_limit_offset(client, mock_url):
         m.get(f"{mock_url}/query", json=mock_data)
         results = client.query(metric="gdp", entity="usa", limit=50, offset=10)
         assert results == []
-        assert m.request_history[-1].qs["limit"] == ["50"]
-        assert m.request_history[-1].qs["offset"] == ["10"]
+        qs = m.request_history[-1].qs
+        assert qs["limit"] == ["50"]
+        assert qs["offset"] == ["10"]
+        assert qs["tail"] == ["20"]
+
+
+def test_query_rejects_head_and_tail(client):
+    with pytest.raises(InvalidInputError, match="head"):
+        client.query(metric="gdp", head=10, tail=10)
+
+
+def test_query_as_of(client, mock_url):
+    mock_data = {"records": []}
+    as_of = datetime(2020, 3, 1, tzinfo=timezone.utc)
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/query", json=mock_data)
+        client.query(metric="gdp", tail=1, as_of=as_of)
+        qs = m.request_history[-1].qs
+        assert qs["tail"] == ["1"]
+        assert "as_of" in qs
 
 
 def test_query_df(client, mock_url):
-    """Test query_df method."""
-    mock_data = {
-        "records": [
-            {
-                "series_id": "ABC123",
-                "entities": ["usa"],
-                "observations": [
-                    {
-                        "observation_timestamp": "2024-01-01T00:00:00",
-                        "release_timestamp": "2024-01-01T00:00:00",
-                        "value": 100.0
-                    }
-                ]
-            }
-        ]
-    }
+    """Test query_df flattens nested TimeSeries observations."""
+    mock_data = {"records": [_query_record()]}
     with requests_mock.Mocker() as m:
         m.get(f"{mock_url}/query", json=mock_data)
         df = client.query_df(metric="gdp")
@@ -137,6 +152,33 @@ def test_query_df(client, mock_url):
         assert df.iloc[0]["value"] == 100.0
         assert df.iloc[0]["series_id"] == "ABC123"
         assert df.iloc[0]["entity_id"] == "usa"
+
+
+def test_get_series_observations(client, mock_url):
+    mock_data = {
+        "series_id": "ABC123",
+        "limit": 1000,
+        "offset": 0,
+        "observations": [
+            {
+                "observation_timestamp": "2024-01-01T00:00:00",
+                "release_timestamp": "2024-01-01T00:00:00",
+                "value": 100.0,
+            }
+        ],
+    }
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/series/ABC123/observations", json=mock_data)
+        results = client.get_series_observations(
+            "ABC123", start_date="2000-01-01", limit=1000
+        )
+        assert len(results) == 1
+        assert isinstance(results[0], Observation)
+        assert results[0].series_id == "ABC123"
+        assert results[0].value == 100.0
+        qs = m.request_history[-1].qs
+        assert qs["start_date"] == ["2000-01-01"]
+        assert qs["limit"] == ["1000"]
 
 
 def test_list_taxonomies(client, mock_url):

@@ -99,6 +99,7 @@ def test_query_direct_id(runner, mock_url):
         assert "100.0" in result.output
         query_req = [r for r in m.request_history if "/query" in r.url][-1]
         assert query_req.qs["limit"] == ["50"]
+        assert query_req.qs["tail"] == ["20"]
 
 
 def test_query_fuzzy_resolution(runner, mock_url):
@@ -132,6 +133,41 @@ def test_query_fuzzy_resolution(runner, mock_url):
         # Verify that the query was called with resolved IDs
         assert m.request_history[-1].qs["metric"] == ["cpi"]
         assert m.request_history[-1].qs["entity"] == ["usa"]
+        assert m.request_history[-1].qs["tail"] == ["20"]
+
+
+def test_series_observations(runner, mock_url):
+    mock_data = {
+        "series_id": "ABC123",
+        "limit": 100,
+        "offset": 0,
+        "observations": [
+            {
+                "observation_timestamp": "2024-01-01T00:00:00",
+                "release_timestamp": "2024-01-01T00:00:00",
+                "value": 100.0,
+            }
+        ],
+    }
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/series/ABC123/observations", json=mock_data)
+        result = runner.invoke(
+            cli,
+            [
+                "series",
+                "observations",
+                "ABC123",
+                "--start-date",
+                "2000-01-01",
+                "--limit",
+                "100",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "100.0" in result.output
+        qs = m.request_history[-1].qs
+        assert qs["start_date"] == ["2000-01-01"]
+        assert qs["limit"] == ["100"]
 
 
 def test_steps_list(runner):
