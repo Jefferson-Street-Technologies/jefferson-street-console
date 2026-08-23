@@ -1,10 +1,10 @@
-"""Host-level find modal: search the catalog and add to the session."""
+"""Host-level find modal: search metrics or entities and add to the session."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Literal
 
 from textual import on, work
 from textual.app import ComposeResult
@@ -14,20 +14,20 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
 from ..client import JSTDataClient
-from ..models import Entity, Metric, Series
+from ..models import Entity, Metric
 from ..session import Session
 
 _PLACEHOLDER = "Highlight a result and press i to inspect."
+FindMode = Literal["metric", "entity"]
+_MODES: tuple[FindMode, ...] = ("metric", "entity")
 
 
 def _resource_type(resource: Any) -> str:
-    if isinstance(resource, Series):
-        return "series"
     if isinstance(resource, Entity):
         return "entity"
     if isinstance(resource, Metric):
         return "metric"
-    return "series"
+    return "metric"
 
 
 def _resource_label(resource: Any) -> str:
@@ -36,6 +36,11 @@ def _resource_label(resource: Any) -> str:
         or getattr(resource, "name", None)
         or getattr(resource, "id", "Unknown")
     )
+
+
+def next_find_mode(mode: FindMode) -> FindMode:
+    """Cycle metric → entity → metric."""
+    return "entity" if mode == "metric" else "metric"
 
 
 class FindResultRow(ListItem):
@@ -57,7 +62,7 @@ class FindResultRow(ListItem):
 
 
 class FindModal(ModalScreen[None]):
-    """Shared find surface: search, add to session, inspect payloads."""
+    """Shared find surface: metric/entity search, add to session, inspect."""
 
     DEFAULT_CSS = """
     FindModal {
@@ -80,7 +85,14 @@ class FindModal(ModalScreen[None]):
         color: #4ade80;
         text-align: center;
         height: 1;
+        margin-bottom: 0;
+    }
+
+    #find-mode-bar {
+        height: 1;
+        text-align: center;
         margin-bottom: 1;
+        color: #888;
     }
 
     #find-search-input {
@@ -170,6 +182,12 @@ class FindModal(ModalScreen[None]):
 
     BINDINGS = [
         Binding("escape", "dismiss", "Close"),
+        Binding(
+            "shift+tab",
+            "toggle_mode",
+            "Toggle metric/entity",
+            priority=True,
+        ),
         Binding("i", "inspect", "Inspect"),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
@@ -177,18 +195,25 @@ class FindModal(ModalScreen[None]):
         Binding("up", "cursor_up", "Up", show=False),
     ]
 
-    def __init__(self, client: JSTDataClient, session: Session) -> None:
+    def __init__(
+        self,
+        client: JSTDataClient,
+        session: Session,
+        mode: FindMode = "metric",
+    ) -> None:
         super().__init__()
         self.client = client
         self.session = session
+        self.mode: FindMode = mode if mode in _MODES else "metric"
         self.search_task: asyncio.Task[None] | None = None
         self._inspected_id: str | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="find-container"):
-            yield Label("FIND // ADD TO SESSION", id="find-title")
+            yield Label("FIND // ADD TO SESSION", id="find-title", markup=True)
+            yield Label("", id="find-mode-bar", markup=True)
             yield Input(
-                placeholder="Search metrics, entities, series...",
+                placeholder="Search metrics…",
                 id="find-search-input",
             )
             with Horizontal(id="find-body"):
@@ -198,15 +223,41 @@ class FindModal(ModalScreen[None]):
                 with Vertical(id="find-inspect-pane"):
                     yield Label("INSPECT", classes="find-pane-header")
                     yield Static(_PLACEHOLDER, id="find-inspect-payload", markup=False)
-            yield Label(
-                "[bold]enter[/bold] focus/add  //  [bold]i[/bold] inspect  //  "
-                "[bold]j[/bold]/[bold]k[/bold] or [bold]↑[/bold]/[bold]↓[/bold]  //  [bold]esc[/bold] close",
-                id="find-hint",
-                markup=True,
-            )
+            yield Label("", id="find-hint", markup=True)
 
     def on_mount(self) -> None:
+        self._refresh_mode_chrome()
         self.query_one("#find-search-input", Input).focus()
+
+    def _refresh_mode_chrome(self) -> None:
+        if self.mode == "metric":
+            self.query_one("#find-title").update(
+                "FIND // [bold #38bdf8]METRIC[/]"
+            )
+            mode_bar = (
+                "[bold #38bdf8]METRIC[/]  ·  [dim #fbbf24]ENTITY[/]   "
+                "(shift+tab to switch)"
+            )
+        else:
+            self.query_one("#find-title").update(
+                "FIND // [bold #fbbf24]ENTITY[/]"
+            )
+            mode_bar = (
+                "[dim #38bdf8]METRIC[/]  ·  [bold #fbbf24]ENTITY[/]   "
+                "(shift+tab to switch)"
+            )
+        self.query_one("#find-mode-bar").update(mode_bar)
+        placeholder = (
+            "Search metrics…" if self.mode == "metric" else "Search entities…"
+        )
+        self.query_one("#find-search-input", Input).placeholder = placeholder
+        other = next_find_mode(self.mode)
+        self.query_one("#find-hint").update(
+            f"[bold]shift+tab[/bold] switch to {other}  //  "
+            "[bold]tab[/bold]/[bold]enter[/bold] results  //  "
+            "[bold]i[/bold] inspect  //  "
+            "[bold]j[/bold]/[bold]k[/bold]  //  [bold]esc[/bold] close"
+        )
 
     def _show_placeholder(self) -> None:
         self._inspected_id = None
@@ -224,15 +275,24 @@ class FindModal(ModalScreen[None]):
             added = self.session.add_metric(resource.id)
         elif isinstance(resource, Entity):
             added = self.session.add_entity(resource.id)
-        elif isinstance(resource, Series):
-            added = self.session.add_series(resource.id)
         elif resource.id in self.session.resource_ids():
             return False
         else:
-            added = self.session.add_series(resource.id)
+            return False
         if added and hasattr(self.app, "remember_label"):
             self.app.remember_label(resource.id, _resource_label(resource))
         return added
+
+    def action_toggle_mode(self) -> None:
+        self.mode = next_find_mode(self.mode)
+        self._refresh_mode_chrome()
+        self.query_one("#find-results-list", ListView).clear()
+        self._show_placeholder()
+        query = self.query_one("#find-search-input", Input).value.strip()
+        if self.search_task:
+            self.search_task.cancel()
+        if len(query) >= 2:
+            self.search_task = asyncio.create_task(self._do_search(query))
 
     @on(Input.Changed, "#find-search-input")
     def on_search_changed(self, event: Input.Changed) -> None:
@@ -247,7 +307,14 @@ class FindModal(ModalScreen[None]):
     async def _do_search(self, query: str) -> None:
         try:
             await asyncio.sleep(0.3)
-            results = await asyncio.to_thread(self.client.search, query, limit=20)
+            if self.mode == "entity":
+                results = await asyncio.to_thread(
+                    self.client.search_entities, query, limit=20
+                )
+            else:
+                results = await asyncio.to_thread(
+                    self.client.search_metrics, query, limit=20
+                )
             list_view = self.query_one("#find-results-list", ListView)
             list_view.clear()
             self._show_placeholder()
