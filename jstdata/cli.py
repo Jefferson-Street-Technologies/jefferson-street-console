@@ -451,6 +451,167 @@ def run_cmd(ctx: click.Context, session: str | None, output: str | None) -> None
         click.echo(f"Error: {e}", err=True)
         sys.exit(2)
 
+
+@cli.group("workflows")
+def workflows_group() -> None:
+    """Save and run named step pipelines."""
+
+
+@workflows_group.command("ls")
+def workflows_ls() -> None:
+    """List saved workflows."""
+    from .workflows import format_pipeline, list_saved_workflows
+
+    workflows = list_saved_workflows()
+    if not workflows:
+        click.echo("No saved workflows.")
+        return
+    for wf in workflows:
+        desc = wf.description or "-"
+        click.echo(f"{wf.id:24} {desc:40} {format_pipeline(wf)}")
+
+
+@workflows_group.command("rm")
+@click.argument("workflow_id")
+def workflows_rm(workflow_id: str) -> None:
+    """Delete a saved workflow."""
+    from .workflows import WorkflowStoreError, delete_workflow
+
+    try:
+        delete_workflow(workflow_id)
+    except WorkflowStoreError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Removed workflow {workflow_id!r}.")
+
+
+@workflows_group.command(
+    "create",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "allow_interspersed_args": False,
+    },
+)
+@click.option(
+    "--id",
+    "workflow_id",
+    required=True,
+    help="Slug id for the workflow (e.g. gdp-rank)",
+)
+@click.option(
+    "--description",
+    default="",
+    help="Optional short description",
+)
+@click.pass_context
+def workflows_create(
+    ctx: click.Context, workflow_id: str, description: str
+) -> None:
+    """Save a step pipeline as a named workflow.
+
+    \b
+    jst workflows create --id gdp-rank -- console : rank --taxonomy country
+    jst workflows create --id gdp --description "GDP leaders" -- console : rank
+    """
+    import sys as _sys
+
+    from .workflows import (
+        PipelineError,
+        WorkflowStoreError,
+        create_workflow_from_tokens,
+        save_workflow,
+        workflow_exists,
+    )
+
+    # Hard boundary: pipeline must follow '--'. Enforce when this process
+    # looks like a real ``jst workflows create`` (CliRunner leaves sys.argv alone).
+    try:
+        create_at = _sys.argv.index("create")
+        via_workflows = "workflows" in _sys.argv[:create_at]
+    except ValueError:
+        via_workflows = False
+    if via_workflows and "--" not in _sys.argv[create_at:]:
+        click.echo(
+            "Error: pass the pipeline after '--'.\n"
+            "Example: jst workflows create --id gdp-rank -- console : rank",
+            err=True,
+        )
+        sys.exit(2)
+    if not ctx.args:
+        click.echo(ctx.get_help())
+        raise SystemExit(2)
+
+    try:
+        if workflow_exists(workflow_id):
+            if not click.confirm(
+                f"Workflow {workflow_id!r} already exists. Overwrite?",
+                default=False,
+            ):
+                click.echo("Aborted.")
+                return
+        workflow = create_workflow_from_tokens(workflow_id, description, list(ctx.args))
+        path = save_workflow(workflow)
+    except WorkflowStoreError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(2)
+    except KeyError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    except PipelineError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(2)
+
+    click.echo(f"Saved workflow {workflow.id!r} → {path}")
+
+
+@workflows_group.command("run")
+@click.argument("workflow_id")
+@click.option(
+    "--session",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Preload a session JSON into the pipeline",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=str),
+    help="Default path for export session writes",
+)
+def workflows_run(
+    workflow_id: str, session: str | None, output: str | None
+) -> None:
+    """Run a saved workflow (validates before launching the UI).
+
+    \b
+    jst workflows run gdp-rank
+    jst workflows run gdp-rank --session in.json
+    """
+    from .workflows import (
+        PipelineError,
+        WorkflowStoreError,
+        load_workflow,
+        resolve_saved_workflow,
+        run_resolved_pipeline,
+    )
+
+    try:
+        workflow = load_workflow(workflow_id)
+        resolved = resolve_saved_workflow(workflow)
+    except WorkflowStoreError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except KeyError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    except PipelineError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(2)
+
+    run_resolved_pipeline(
+        client, resolved, session_path=session, output_path=output
+    )
+
+
 if __name__ == "__main__":
     try:
         cli()

@@ -321,19 +321,28 @@ def run_pipeline(
     output_path: Optional[str] = None,
 ) -> None:
     """Launch the host over a resolved step pipeline."""
-    resolved = resolve_pipeline(tokens)
+    run_resolved_pipeline(
+        client,
+        resolve_pipeline(tokens),
+        session_path=session_path,
+        output_path=output_path,
+    )
+
+
+def run_resolved_pipeline(
+    client: JSTDataClient,
+    steps: list[ResolvedStep],
+    *,
+    session_path: Optional[str] = None,
+    output_path: Optional[str] = None,
+) -> None:
+    """Launch the host over an already-resolved step list (no re-parse)."""
     from .host import WorkflowHost
 
     app = WorkflowHost(
         client,
-        resolved,
+        steps,
         session_path=session_path,
         output_path=output_path,
     )
     app.run()
-
-
-# Back-compat aliases used during the workflow → step rename
-WorkflowSpec = StepSpec
-get_workflow = get_step
-list_workflows = list_steps
