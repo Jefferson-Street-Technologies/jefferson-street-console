@@ -22,6 +22,12 @@ def test_agent_guide_cli():
     assert "## Composition" in out
     assert "## Resolution rule" in out
     assert "## Host chrome" in out
+    assert "## Sessions" in out
+    assert "### Session JSON fields" in out
+    assert "### Create and modify" in out
+    assert "`Session.load" in out or "Session.load" in out
+    assert "--session" in out
+    assert "`metric`" in out
     assert "## CLI commands" in out
     assert "## Interactive steps" in out
     assert "`jst agent-guide`" in out
@@ -29,6 +35,16 @@ def test_agent_guide_cli():
     assert "`jst workflows create`" in out
     assert "`jst run`" in out
     assert "Never invent" in out
+
+
+def test_agent_guide_session_fields_match_model():
+    from dataclasses import fields
+
+    from jstdata.session import Session
+
+    guide = render_agent_guide(cli)
+    for f in fields(Session):
+        assert f"`{f.name}`" in guide, f.name
 
 
 def test_agent_guide_lists_all_leaf_commands():

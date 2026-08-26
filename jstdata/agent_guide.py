@@ -1,18 +1,21 @@
 """Generate the markdown agent bootstrap guide (`jst agent-guide`).
 
-CLI commands and interactive steps are derived from the live Click tree and
-step registry. Conceptual glue (data model, composition, resolution, host
-chrome) is static prose that changes rarely.
+CLI commands, interactive steps, and session field names are derived from the
+live Click tree, step registry, and ``Session`` dataclass. Conceptual glue
+(data model, composition, resolution, host chrome, session how-to) is static
+prose that changes rarely.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import fields
 from importlib.metadata import PackageNotFoundError, version
-from typing import Iterable
+from typing import Iterable, get_args, get_origin
 
 import click
 
+from .session import Session
 from .workflows import list_steps
 
 _PACKAGE = "jstdata"
@@ -25,10 +28,8 @@ _DATA_MODEL = """\
 - **Taxonomy** — a membership catalog that defines a population of entities
   (e.g. `country`, `us-county`, `sec-central-index-key`). The main knob for scoping analysis.
 - **Series** — one concrete time series: a metric observed for an entity (at a frequency).
-- **Session** — staged analytical intent for interactive work: lists of metric / entity /
-  series ids plus query filters (`taxonomy`, `head`/`tail`, `as_of`, `sort_by`, …).
-  No observations are stored in the session; it is portable intent that can drive
-  `query`, export, or a TUI pipeline.
+- **Session** — portable analytical intent (resource ids + query filters). See **Sessions**
+  below. No observations live in a session file.
 
 Ids are opaque slugs. Display names are not ids.
 """
@@ -45,7 +46,8 @@ jst run STEP [ARGS...] : STEP [ARGS...] : ...
 - **Steps** are TUI screens that edit one shared session for the lifetime of the run.
 - **Step args** (flags declared on each step) seed that step; they are not the session.
 - **Saved workflows** (`jst workflows create` / `run`) persist step topology + step args
-  only. Session state is interactive (or optionally preloaded with `--session`).
+  only. Bake discovered metrics/entities into a **session JSON** and pass `--session`
+  when running (see **Sessions**).
 - Pipeline tokens for `workflows create` must follow a `--` boundary, e.g.
   `jst workflows create --id gdp-rank -- console : rank --taxonomy country`.
 """
@@ -74,6 +76,62 @@ step-specific bindings shown under `?`):
 | `n` / `p` | Next / previous step in the pipeline |
 | `q` | Quit |
 | `?` | Step-specific keybindings |
+"""
+
+_SESSION_HOWTO = """\
+### Create and modify
+
+**Write a JSON file** (usual agent path after resolving ids):
+
+```json
+{
+  "metric": ["employed-persons", "unemployment-rate"],
+  "taxonomy": "country",
+  "tail": 1,
+  "sort_by": "value"
+}
+```
+
+Omit unused fields. Empty lists may be omitted. Ids must already be resolved.
+
+**Python API** (same shape as the JSON file):
+
+```python
+from jstdata import Session
+
+session = Session(
+    metric=["employed-persons", "unemployment-rate"],
+    taxonomy="country",
+    tail=1,
+    sort_by="value",
+)
+session.add_metric("gdp")          # no-op if already present
+session.add_entity("united-states")
+session.remove_id("gdp")           # removes from metric/entity/series
+session.save("labor.json")         # write JSON
+session = Session.load("labor.json")
+```
+
+Edit the JSON by hand or re-save from Python; there is no separate session CLI.
+
+### Use with steps and workflows
+
+Preload into a pipeline or saved workflow:
+
+```bash
+jst run --session labor.json rank --taxonomy country
+jst workflows run gdp-rank --session labor.json
+```
+
+`--session` copies the file into the live session at startup. The user can still
+change it in the TUI (`s` / `f`). Export with `e` to write a new JSON snapshot.
+
+Typical pattern after metric discovery:
+
+1. Resolve metric (and taxonomy) ids via search.
+2. Write a session JSON with those `metric` ids (and optional filters).
+3. Create or reuse a workflow whose steps consume session metrics (e.g. `rank`).
+4. Hand the user: `jst workflows run <id> --session <file>.json`.
 """
 
 
@@ -182,6 +240,78 @@ def _format_step_args(spec) -> str:
     return ", ".join(bits)
 
 
+def _annotation_label(annotation: object) -> str:
+    """Human-readable type for a Session field annotation."""
+    origin = get_origin(annotation)
+    if origin is list:
+        args = get_args(annotation)
+        inner = _annotation_label(args[0]) if args else "any"
+        return f"list[{inner}]"
+    if origin is not None:
+        # Optional[T] / Union[T, None]
+        args = [a for a in get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return f"{_annotation_label(args[0])} | null"
+    if annotation is str:
+        return "string"
+    if annotation is int:
+        return "integer"
+    if isinstance(annotation, type):
+        return annotation.__name__
+    text = str(annotation)
+    return text.replace("typing.", "").replace("None", "null")
+
+
+_SESSION_FIELD_NOTES: dict[str, str] = {
+    "metric": "Resolved metric slug ids staged for the investigation",
+    "entity": "Resolved entity slug ids",
+    "series": "Resolved series slug ids (when targeting series directly)",
+    "frequency": "Optional frequency filter (Annual, Quarterly, Monthly, Daily, Intraday)",
+    "taxonomy": "Population scope; entity membership catalog slug",
+    "head": "Earliest N observations per series for `/query`",
+    "tail": "Latest N observations per series for `/query`",
+    "as_of": "Timezone-aware ISO-8601 cutoff on release_timestamp",
+    "sort_by": "`id` (default) or `value` (desc) for `/query` ordering",
+    "start_date": "Legacy/deep-history field; not sent to `/query`",
+    "end_date": "Legacy/deep-history field; not sent to `/query`",
+    "start_time": "Legacy/deep-history field; not sent to `/query`",
+    "end_time": "Legacy/deep-history field; not sent to `/query`",
+    "order_by": "Observation order preference where applicable (`asc`/`desc`)",
+}
+
+
+def render_session_section() -> str:
+    """Sessions how-to plus a field table derived from ``Session``."""
+    lines = [
+        "## Sessions",
+        "",
+        "A **session** is the portable bag of resource ids and filters that steps share.",
+        "It mirrors `jst query` / `JSTDataClient.query` intent: no observations, only what",
+        "is needed to (re)run a query or drive a TUI pipeline.",
+        "",
+        "Saved workflows do **not** store session contents. After discovering metrics or",
+        "entities, write them into a session JSON and pass `--session` on `jst run` or",
+        "`jst workflows run`. Steps such as `rank` (metrics in session) and `discover`",
+        "(entities in session) read that staged state.",
+        "",
+        "### Session JSON fields",
+        "",
+        "Derived from the installed `Session` model. Write a UTF-8 JSON object;",
+        "`Session.save` / `Session.load` use this shape.",
+        "",
+        "| Field | Type | Notes |",
+        "|-------|------|-------|",
+    ]
+    for f in fields(Session):
+        note = _SESSION_FIELD_NOTES.get(f.name, "")
+        lines.append(
+            f"| `{_md_cell(f.name)}` | {_md_cell(_annotation_label(f.type))} | {_md_cell(note)} |"
+        )
+    lines.append("")
+    lines.append(_SESSION_HOWTO.rstrip())
+    return "\n".join(lines)
+
+
 def render_steps_section() -> str:
     specs = list_steps()
     lines = [
@@ -265,6 +395,8 @@ def render_agent_guide(cli_group: click.Group) -> str:
         _RESOLUTION.rstrip(),
         "",
         _HOST_CHROME.rstrip(),
+        "",
+        render_session_section(),
         "",
         "## CLI commands",
         "",
