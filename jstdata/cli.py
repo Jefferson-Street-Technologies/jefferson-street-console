@@ -371,6 +371,14 @@ def query(
     
     format_and_print(results, format)
 
+@cli.command("agent-guide")
+def agent_guide_cmd() -> None:
+    """Print a markdown bootstrap guide for agents (version-tied)."""
+    from .agent_guide import render_agent_guide
+
+    click.echo(render_agent_guide(cli), nl=False)
+
+
 @cli.command("steps")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable catalog")
 def steps_cmd(as_json: bool) -> None:
