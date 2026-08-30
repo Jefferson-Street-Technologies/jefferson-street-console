@@ -13,10 +13,14 @@ from typing import Any, Optional
 
 import yaml
 
+from importlib.resources import files
+
 from ..client import APP_DIR
 from .base import PipelineError, ResolvedStep, resolve_pipeline
 
 WORKFLOWS_DIR = APP_DIR / "workflows"
+TUTORIAL_WORKFLOW_ID = "tutorial"
+BUNDLED_WORKFLOW_IDS = frozenset({TUTORIAL_WORKFLOW_ID})
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
@@ -105,6 +109,37 @@ def validate_workflow_id(workflow_id: str) -> str:
     return workflow_id
 
 
+def is_bundled_workflow(workflow_id: str) -> bool:
+    return workflow_id in BUNDLED_WORKFLOW_IDS
+
+
+def load_bundled_workflow(workflow_id: str) -> SavedWorkflow:
+    if not is_bundled_workflow(workflow_id):
+        raise WorkflowStoreError(f"No built-in workflow named {workflow_id!r}.")
+    try:
+        text = files("jstdata.workflows.bundled").joinpath(
+            f"{workflow_id}.yaml"
+        ).read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise WorkflowStoreError(
+            f"Built-in workflow {workflow_id!r} is missing from the package."
+        ) from exc
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise WorkflowStoreError(f"Could not parse built-in {workflow_id!r}: {exc}") from exc
+    workflow = SavedWorkflow.from_dict(data or {})
+    if workflow.id != workflow_id:
+        raise WorkflowStoreError(
+            f"Built-in workflow file has id {workflow.id!r}, expected {workflow_id!r}."
+        )
+    return workflow
+
+
+def list_bundled_workflows() -> list[SavedWorkflow]:
+    return [load_bundled_workflow(wid) for wid in sorted(BUNDLED_WORKFLOW_IDS)]
+
+
 def workflow_path(workflow_id: str, *, root: Optional[Path] = None) -> Path:
     validate_workflow_id(workflow_id)
     base = root if root is not None else WORKFLOWS_DIR
@@ -145,24 +180,48 @@ def load_workflow(
     *,
     root: Optional[Path] = None,
 ) -> SavedWorkflow:
-    path = workflow_path(workflow_id, root=root)
-    if not path.is_file():
-        raise WorkflowStoreError(f"No workflow named {workflow_id!r}.")
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-    except yaml.YAMLError as exc:
-        raise WorkflowStoreError(f"Could not parse {path}: {exc}") from exc
-    workflow = SavedWorkflow.from_dict(data or {})
-    if workflow.id != workflow_id:
-        raise WorkflowStoreError(
-            f"Workflow file {path.name} has id {workflow.id!r}, "
-            f"expected {workflow_id!r}."
-        )
-    return workflow
+    validate_workflow_id(workflow_id)
+    if root is not None:
+        path = root / f"{workflow_id}.yaml"
+        if not path.is_file():
+            raise WorkflowStoreError(f"No workflow named {workflow_id!r}.")
+        try:
+            with path.open(encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            raise WorkflowStoreError(f"Could not parse {path}: {exc}") from exc
+        workflow = SavedWorkflow.from_dict(data or {})
+        if workflow.id != workflow_id:
+            raise WorkflowStoreError(
+                f"Workflow file {path.name} has id {workflow.id!r}, "
+                f"expected {workflow_id!r}."
+            )
+        return workflow
+
+    path = workflow_path(workflow_id)
+    if path.is_file():
+        try:
+            with path.open(encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            raise WorkflowStoreError(f"Could not parse {path}: {exc}") from exc
+        workflow = SavedWorkflow.from_dict(data or {})
+        if workflow.id != workflow_id:
+            raise WorkflowStoreError(
+                f"Workflow file {path.name} has id {workflow.id!r}, "
+                f"expected {workflow_id!r}."
+            )
+        return workflow
+    if is_bundled_workflow(workflow_id):
+        return load_bundled_workflow(workflow_id)
+    raise WorkflowStoreError(f"No workflow named {workflow_id!r}.")
 
 
 def delete_workflow(workflow_id: str, *, root: Optional[Path] = None) -> None:
+    if root is None and is_bundled_workflow(workflow_id):
+        raise WorkflowStoreError(
+            f"Cannot remove built-in workflow {workflow_id!r}."
+        )
     path = workflow_path(workflow_id, root=root)
     if not path.is_file():
         raise WorkflowStoreError(f"No workflow named {workflow_id!r}.")
@@ -170,18 +229,38 @@ def delete_workflow(workflow_id: str, *, root: Optional[Path] = None) -> None:
 
 
 def list_saved_workflows(*, root: Optional[Path] = None) -> list[SavedWorkflow]:
-    base = root if root is not None else WORKFLOWS_DIR
-    if not base.is_dir():
-        return []
+    if root is not None:
+        base = root
+        if not base.is_dir():
+            return []
+        out: list[SavedWorkflow] = []
+        for path in sorted(base.glob("*.yaml")):
+            try:
+                with path.open(encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                out.append(SavedWorkflow.from_dict(data or {}))
+            except (WorkflowStoreError, yaml.YAMLError, OSError):
+                continue
+        return out
+
+    seen: set[str] = set()
     out: list[SavedWorkflow] = []
-    for path in sorted(base.glob("*.yaml")):
-        try:
-            with path.open(encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-            out.append(SavedWorkflow.from_dict(data or {}))
-        except (WorkflowStoreError, yaml.YAMLError, OSError):
-            # Skip corrupt files in listings; load/run still error loudly.
-            continue
+    for wf in list_bundled_workflows():
+        out.append(wf)
+        seen.add(wf.id)
+    base = WORKFLOWS_DIR
+    if base.is_dir():
+        for path in sorted(base.glob("*.yaml")):
+            try:
+                with path.open(encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                wf = SavedWorkflow.from_dict(data or {})
+            except (WorkflowStoreError, yaml.YAMLError, OSError):
+                continue
+            if wf.id in seen:
+                continue
+            out.append(wf)
+            seen.add(wf.id)
     return out
 
 

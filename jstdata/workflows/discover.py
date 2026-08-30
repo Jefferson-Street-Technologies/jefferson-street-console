@@ -60,7 +60,8 @@ class DiscoverScreen(Screen):
             show=False,
             priority=True,
         ),
-        Binding("shift+enter", "add_metric", "Add metric to session", priority=True),
+        Binding("enter", "preview_metric", "Preview metric", priority=True),
+        Binding("space", "add_metric", "Add metric to session", priority=True),
         Binding("j", "cursor_down", "Move highlight down", show=False),
         Binding("k", "cursor_up", "Move highlight up", show=False),
     ]
@@ -219,7 +220,7 @@ class DiscoverScreen(Screen):
             f"mode {self.mode}",
             "[bold]/[/bold] filter",
             "[bold]enter[/bold] preview",
-            "[bold]shift+enter[/bold] add",
+            "[bold]space[/bold] add",
             "[bold]tab[/bold] panes",
             "[bold]j/k[/bold] move",
             "[bold]s[/bold] session",
@@ -325,28 +326,29 @@ class DiscoverScreen(Screen):
         return False
 
     def action_cursor_down(self) -> None:
-        focused = self.focused
-        if isinstance(focused, Input):
+        if isinstance(self.focused, Input):
             return
         if self._preview_is_focused():
             self.query_one("#preview-scroll", ScrollableContainer).scroll_relative(
                 y=1, animate=False
             )
             return
-        if focused and hasattr(focused, "action_cursor_down"):
-            focused.action_cursor_down()
+        self.query_one("#metrics-list", ListView).action_cursor_down()
 
     def action_cursor_up(self) -> None:
-        focused = self.focused
-        if isinstance(focused, Input):
+        if isinstance(self.focused, Input):
             return
         if self._preview_is_focused():
             self.query_one("#preview-scroll", ScrollableContainer).scroll_relative(
                 y=-1, animate=False
             )
             return
-        if focused and hasattr(focused, "action_cursor_up"):
-            focused.action_cursor_up()
+        self.query_one("#metrics-list", ListView).action_cursor_up()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "add_metric" and isinstance(self.focused, Input):
+            return False
+        return True
 
     def _highlighted_metric(self) -> Optional[Metric]:
         child = self.query_one("#metrics-list", ListView).highlighted_child
@@ -354,7 +356,19 @@ class DiscoverScreen(Screen):
             return child.metric
         return None
 
+    def action_preview_metric(self) -> None:
+        if isinstance(self.focused, Input):
+            return
+        metric = self._highlighted_metric()
+        if metric is not None:
+            self.run_preview(metric)
+
     def action_add_metric(self) -> None:
+        if isinstance(self.focused, Input):
+            return
+        list_view = self.query_one("#metrics-list", ListView)
+        if list_view.index is None and self._metrics:
+            list_view.index = 0
         metric = self._highlighted_metric()
         if metric is None:
             self.notify("Highlight a metric first", severity="warning")
@@ -390,11 +404,6 @@ class DiscoverScreen(Screen):
     @on(Input.Submitted, "#metrics-filter")
     def on_filter_submit(self) -> None:
         self.query_one("#metrics-list", ListView).focus()
-
-    @on(ListView.Selected, "#metrics-list")
-    def on_metric_selected(self, event: ListView.Selected) -> None:
-        if isinstance(event.item, MetricRow):
-            self.run_preview(event.item.metric)
 
     @on(ListView.Highlighted, "#metrics-list")
     def on_metric_highlighted(self, event: ListView.Highlighted) -> None:
@@ -476,11 +485,11 @@ DISCOVER = register(
             StepBinding("/", "focus_filter", "Filter the generated metric list"),
             StepBinding(
                 "enter",
-                "preview",
+                "preview_metric",
                 "Preview the latest observations for the highlighted metric",
             ),
             StepBinding(
-                "shift+enter", "add_metric", "Add highlighted metric to the session"
+                "space", "add_metric", "Add highlighted metric to the session"
             ),
             StepBinding(
                 "tab", "cycle_panes", "Switch focus between metrics and preview"

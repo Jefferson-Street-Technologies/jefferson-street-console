@@ -371,6 +371,24 @@ def query(
     
     format_and_print(results, format)
 
+@cli.command("tutorial")
+@click.option(
+    "--session",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Preload a session JSON into the pipeline",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=str),
+    help="Default path for export session writes",
+)
+def tutorial_cmd(session: str | None, output: str | None) -> None:
+    """Run the built-in interactive tutorial (alias for workflows run tutorial)."""
+    from .workflows import run_tutorial
+
+    run_tutorial(client, session_path=session, output_path=output)
+
+
 @cli.command("agent-guide")
 def agent_guide_cmd() -> None:
     """Print a markdown bootstrap guide for agents (version-tied)."""
@@ -468,7 +486,11 @@ def workflows_group() -> None:
 @workflows_group.command("ls")
 def workflows_ls() -> None:
     """List saved workflows."""
-    from .workflows import format_pipeline, list_saved_workflows
+    from .workflows import (
+        format_pipeline,
+        is_bundled_workflow,
+        list_saved_workflows,
+    )
 
     workflows = list_saved_workflows()
     if not workflows:
@@ -476,7 +498,10 @@ def workflows_ls() -> None:
         return
     for wf in workflows:
         desc = wf.description or "-"
-        click.echo(f"{wf.id:24} {desc:40} {format_pipeline(wf)}")
+        tag = " (built-in)" if is_bundled_workflow(wf.id) else ""
+        click.echo(
+            f"{wf.id:24}{tag:11} {desc:40} {format_pipeline(wf)}"
+        )
 
 
 @workflows_group.command("rm")
@@ -596,14 +621,19 @@ def workflows_run(
     """
     from .workflows import (
         PipelineError,
+        TUTORIAL_WORKFLOW_ID,
         WorkflowStoreError,
         load_workflow,
         resolve_saved_workflow,
         run_resolved_pipeline,
+        run_tutorial,
     )
 
     try:
         workflow = load_workflow(workflow_id)
+        if workflow_id == TUTORIAL_WORKFLOW_ID:
+            run_tutorial(client, session_path=session, output_path=output)
+            return
         resolved = resolve_saved_workflow(workflow)
     except WorkflowStoreError as e:
         click.echo(f"Error: {e}", err=True)

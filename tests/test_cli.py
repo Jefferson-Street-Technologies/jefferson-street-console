@@ -232,7 +232,7 @@ def test_step_help_discover(runner):
     assert result.exit_code == 0
     assert "Discover" in result.output
     assert "--mode" in result.output
-    assert "shift+enter" in result.output
+    assert "space" in result.output
 
 
 def test_step_json(runner):

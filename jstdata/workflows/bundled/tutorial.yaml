@@ -1,0 +1,10 @@
+id: tutorial
+description: Compare Apple, Microsoft, and Amazon — your first JST investigation.
+steps:
+  - id: console
+    args:
+      taxonomy: sec-central-index-key
+      resource_type: entity
+  - id: discover
+    args:
+      mode: union

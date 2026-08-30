@@ -97,10 +97,11 @@ class ExportModal(ModalScreen[None]):
         Binding("escape", "dismiss", "Close"),
     ]
 
-    def __init__(self, session: Session, default_path: str) -> None:
+    def __init__(self, session: Session, default_path: str, on_write=None) -> None:
         super().__init__()
         self.session = session
         self.default_path = default_path
+        self.on_write = on_write
         self.python_code = session.to_python()
         self.cli_command = session.to_cli()
 
@@ -157,6 +158,8 @@ class ExportModal(ModalScreen[None]):
             if hasattr(self.app, "output_path"):
                 self.app.output_path = path
             self.notify(f"Session written to {path}")
+            if self.on_write:
+                self.on_write(path)
         except Exception as e:
             self.notify(f"Failed to write session: {e}", severity="error")
 

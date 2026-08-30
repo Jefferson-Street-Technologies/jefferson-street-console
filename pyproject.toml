@@ -5,6 +5,7 @@ description = "A Python interface to the Jefferson Street REST API."
 authors = ["Mahfuj Ahbab"]
 readme = "README.md"
 license = "MIT"
+include = ["jstdata/workflows/bundled/*.yaml"]
 homepage = "https://github.com/mahfuj/python_api"
 repository = "https://github.com/mahfuj/python_api"
 keywords = ["api", "cli", "data", "jefferson street"]

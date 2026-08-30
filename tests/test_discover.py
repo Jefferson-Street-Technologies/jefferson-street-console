@@ -142,6 +142,19 @@ def test_render_preview_scales_each_series_to_its_own_max():
     assert format_compact(1.1) in sa_block
 
 
+def test_discover_check_action_enables_keys():
+    from unittest.mock import MagicMock
+
+    import jstdata.workflows.discover as discover_mod
+    from jstdata.session import Session
+
+    screen = discover_mod.DiscoverScreen(MagicMock(), Session())
+    assert screen.check_action("add_metric", ()) is True
+    assert screen.check_action("cursor_down", ()) is True
+    screen.focused = MagicMock()  # not an Input
+    assert screen.check_action("add_metric", ()) is True
+
+
 def test_discover_is_registered():
     import jstdata.workflows  # noqa: F401
 
@@ -151,7 +164,7 @@ def test_discover_is_registered():
     assert any(a["name"] == "mode" for a in spec.to_dict()["arguments"])
     keys = {b["key"] for b in spec.to_dict()["bindings"]}
     assert "/" in keys
-    assert "shift+enter" in keys
+    assert "space" in keys
     assert "tab" in keys
 
 
