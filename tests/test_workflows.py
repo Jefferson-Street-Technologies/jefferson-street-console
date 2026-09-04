@@ -150,9 +150,22 @@ def test_resolve_pipeline_console_relation():
         ["console", "--relation", "classified_as:sic:3674", "--resource-type", "entity"]
     )
     assert resolved[0].kwargs == {
-        "relation": "classified_as:sic:3674",
+        "relation": ["classified_as:sic:3674"],
         "resource_type": "entity",
     }
+    multi = resolve_pipeline(
+        [
+            "console",
+            "--relation",
+            "classified_as:sic:3674",
+            "--relation",
+            "has_security:ticker:NVDA",
+        ]
+    )
+    assert multi[0].kwargs["relation"] == [
+        "classified_as:sic:3674",
+        "has_security:ticker:NVDA",
+    ]
 
 
 def test_resolve_pipeline_unknown_step():

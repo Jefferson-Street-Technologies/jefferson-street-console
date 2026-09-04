@@ -158,7 +158,8 @@ def show_entity(id, format):
 @click.option("--taxonomy", help="Restrict search to entities in a taxonomy")
 @click.option(
     "--relation",
-    help="Filter by relationship anchor (<relationship_type>:<to_entity_id>)",
+    multiple=True,
+    help="Filter by relationship anchor (<relationship_type>:<to_entity_id>). Repeatable; OR'd.",
 )
 @click.option(
     "--metric",
@@ -178,7 +179,7 @@ def search_entities(query, taxonomy, relation, metric, mode, limit, offset, form
         query,
         metric=list(metric) or None,
         taxonomy=taxonomy,
-        relation=relation,
+        relation=list(relation) or None,
         mode=mode,
         limit=limit,
         offset=offset,

@@ -29,6 +29,7 @@ class StepArgument:
     required: bool = False
     default: Any = None
     choices: Optional[tuple[str, ...]] = None
+    multiple: bool = False
 
     def flag(self) -> str:
         return "--" + self.name.replace("_", "-")
@@ -41,6 +42,7 @@ class StepArgument:
             "description": self.description,
             "required": self.required,
             "default": self.default,
+            "multiple": self.multiple,
         }
         if self.choices is not None:
             data["choices"] = list(self.choices)
@@ -245,13 +247,17 @@ def parse_step_kwargs(spec: StepSpec, tokens: Sequence[str]) -> dict[str, Any]:
             i += 1
             continue
         if inline is not None:
-            kwargs[arg.name] = _coerce(arg, inline)
+            value = _coerce(arg, inline)
             i += 1
-            continue
-        if i + 1 >= len(tokens):
-            raise PipelineError(f"{flag} requires a value.")
-        kwargs[arg.name] = _coerce(arg, tokens[i + 1])
-        i += 2
+        else:
+            if i + 1 >= len(tokens):
+                raise PipelineError(f"{flag} requires a value.")
+            value = _coerce(arg, tokens[i + 1])
+            i += 2
+        if arg.multiple:
+            kwargs.setdefault(arg.name, []).append(value)
+        else:
+            kwargs[arg.name] = value
 
     for arg in spec.arguments:
         if arg.name in kwargs:
@@ -291,6 +297,8 @@ def format_step_help(spec: StepSpec) -> str:
             default = f"  [default: {arg.default}]" if arg.default is not None else ""
             lines.append(f"  {arg.flag()} {arg.type.upper()}{req}{default}")
             lines.append(f"      {arg.description}")
+            if arg.multiple:
+                lines.append("      Repeatable.")
             if arg.choices:
                 lines.append(f"      Choices: {', '.join(arg.choices)}")
             lines.append("")

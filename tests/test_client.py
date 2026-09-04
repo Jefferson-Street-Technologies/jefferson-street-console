@@ -259,6 +259,23 @@ def test_search_entities_relation(client, mock_url):
         assert "query" not in qs
 
 
+def test_search_entities_multiple_relations(client, mock_url):
+    mock_data = {
+        "records": [{"id": "cik:1045810", "label": "NVIDIA CORP"}]
+    }
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/search/entities", json=mock_data)
+        entities = client.search_entities(
+            relation=["classified_as:sic:3674", "has_security:ticker:NVDA"]
+        )
+        assert entities[0].id == "cik:1045810"
+        # requests_mock lowercases query values
+        qs = m.request_history[-1].qs
+        assert sorted(qs["relation"]) == sorted(
+            ["classified_as:sic:3674", "has_security:ticker:nvda"]
+        )
+
+
 def test_search_metrics_omits_blank_query(client, mock_url):
     with requests_mock.Mocker() as m:
         m.get(f"{mock_url}/search/metrics", json={"records": []})

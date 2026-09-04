@@ -23,6 +23,16 @@ PREFETCH_LIMIT = 201
 LOCAL_CAP = 200
 
 
+def _normalize_relations(relation: str | list[str] | tuple[str, ...] | None) -> list[str] | None:
+    if relation is None:
+        return None
+    if isinstance(relation, str):
+        value = relation.strip()
+        return [value] if value else None
+    items = [str(v).strip() for v in relation if str(v).strip()]
+    return items or None
+
+
 class SearchResultRow(ListItem):
     """A row in the search results list."""
 
@@ -146,7 +156,7 @@ class WorkspaceScreen(Screen):
         session: Session,
         taxonomy: str | None = None,
         resource_type: str | None = None,
-        relation: str | None = None,
+        relation: str | list[str] | None = None,
     ) -> None:
         super().__init__()
         self.client = client
@@ -154,13 +164,20 @@ class WorkspaceScreen(Screen):
         self.taxonomy = taxonomy or None
         self.taxonomy_name = taxonomy
         self.resource_type = (resource_type or "").strip().lower() or None
-        self.relation = (relation or "").strip() or None
+        self.relations = _normalize_relations(relation)
         if self.resource_type not in (None, "entity", "metric", "series"):
             self.resource_type = None
 
         self.search_task: asyncio.Task[None] | None = None
         self.catalog: list[Resource] = []
         self.large_search_space = False
+
+    def _relation_label(self) -> str:
+        if not self.relations:
+            return ""
+        if len(self.relations) == 1:
+            return self.relations[0]
+        return f"{len(self.relations)} relations"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="workspace-body"):
@@ -192,7 +209,7 @@ class WorkspaceScreen(Screen):
     def _apply_search_chrome(self) -> None:
         tax = self.taxonomy_name or self.taxonomy or ""
         rtype = self.resource_type.upper() if self.resource_type else ""
-        rel = self.relation or ""
+        rel = self._relation_label()
         if rel and rtype:
             header = f"RESULTS // {rtype} // {rel}"
             placeholder = f"/ search {rtype.lower()} linked via {rel}…"
@@ -221,8 +238,8 @@ class WorkspaceScreen(Screen):
         parts = [f"{step_id} {i}/{n}"]
         if self.taxonomy:
             parts.append(f"tax {self.taxonomy}")
-        if self.relation:
-            rel = self.relation
+        if self.relations:
+            rel = self._relation_label()
             if len(rel) > 28:
                 rel = rel[:25] + "…"
             parts.append(f"rel {rel}")
@@ -289,7 +306,7 @@ class WorkspaceScreen(Screen):
     ) -> tuple[list[Entity], list[Metric], list[Series]]:
         rtype = self.resource_type
         tax = self.taxonomy
-        rel = self.relation
+        rel = self.relations
         if rtype == "entity":
             entities = await asyncio.to_thread(
                 self.client.search_entities,
@@ -396,7 +413,7 @@ class WorkspaceScreen(Screen):
 
     async def _search_remote(self, query: str) -> list[Resource]:
         tax = self.taxonomy
-        rel = self.relation
+        rel = self.relations
         rtype = self.resource_type
         if rtype == "entity":
             return list(
@@ -515,10 +532,11 @@ CONSOLE = register(
             StepArgument(
                 name="relation",
                 type="string",
+                multiple=True,
                 description=(
                     "Restrict entity search to those linked to an anchor via a typed "
                     "relationship (<relationship_type>:<to_entity_id>, "
-                    "e.g. classified_as:sic:3674)"
+                    "e.g. classified_as:sic:3674). Repeatable; OR'd."
                 ),
             ),
             StepArgument(

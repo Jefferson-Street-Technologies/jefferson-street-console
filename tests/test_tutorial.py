@@ -25,6 +25,11 @@ def test_bundled_tutorial_workflow_loads():
     assert [s.id for s in wf.steps] == ["console", "discover"]
     assert wf.steps[0].args["taxonomy"] == "sec-central-index-key"
     assert wf.steps[0].args["resource_type"] == "entity"
+    assert wf.steps[0].args["relation"] == [
+        "classified_as:sic:7372",
+        "classified_as:sic:5961",
+        "classified_as:sic:3571",
+    ]
     assert wf.steps[1].args["mode"] == "union"
 
 

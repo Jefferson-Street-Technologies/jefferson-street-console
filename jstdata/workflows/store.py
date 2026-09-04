@@ -277,8 +277,10 @@ def workflow_to_tokens(workflow: SavedWorkflow) -> list[str]:
                 if value:
                     tokens.append(flag)
                 continue
-            tokens.append(flag)
-            tokens.append(str(value))
+            values = value if isinstance(value, (list, tuple)) else [value]
+            for item in values:
+                tokens.append(flag)
+                tokens.append(str(item))
     return tokens
 
 
