@@ -357,6 +357,7 @@ class JSTDataClient:
         query: Optional[str] = None,
         metric: Optional[Union[str, List[str]]] = None,
         taxonomy: Optional[str] = None,
+        relation: Optional[str] = None,
         mode: str = "union",
         limit: int = 5,
         offset: int = 0,
@@ -366,6 +367,8 @@ class JSTDataClient:
         Omit ``query`` (or pass blank) to list the matching set in label order.
         ``metric`` may be one id or many; ``mode`` is ``union`` or ``intersect``
         when more than one metric is given.
+        ``relation`` filters to entities with a typed edge to an anchor
+        (``<relationship_type>:<to_entity_id>``).
         """
         params: Dict[str, Any] = {"limit": limit, "offset": offset}
         if query is not None and str(query).strip():
@@ -376,6 +379,8 @@ class JSTDataClient:
             params["mode"] = mode
         if taxonomy:
             params["taxonomy"] = taxonomy
+        if relation:
+            params["relation"] = relation
         data = self.make_request("search/entities", params)
         return [Entity.from_dict(e) for e in data["records"]]
 

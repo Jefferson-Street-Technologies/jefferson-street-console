@@ -157,6 +157,10 @@ def show_entity(id, format):
 @click.argument("query", required=False, default=None)
 @click.option("--taxonomy", help="Restrict search to entities in a taxonomy")
 @click.option(
+    "--relation",
+    help="Filter by relationship anchor (<relationship_type>:<to_entity_id>)",
+)
+@click.option(
     "--metric",
     multiple=True,
     help="Restrict to entities associated with these metrics. Repeatable.",
@@ -168,12 +172,13 @@ def show_entity(id, format):
     help="How to combine multiple --metric values",
 )
 @common_search_params
-def search_entities(query, taxonomy, metric, mode, limit, offset, format):
+def search_entities(query, taxonomy, relation, metric, mode, limit, offset, format):
     """Search for entities by intent. Omit QUERY to list the matching set."""
     results = client.search_entities(
         query,
         metric=list(metric) or None,
         taxonomy=taxonomy,
+        relation=relation,
         mode=mode,
         limit=limit,
         offset=offset,

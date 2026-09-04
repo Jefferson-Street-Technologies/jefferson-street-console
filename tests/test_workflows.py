@@ -31,10 +31,11 @@ def test_console_is_registered():
     console = get_step("console")
     assert console.name == "Console"
     assert console.to_dict()["example"] == (
-        "jst run console --taxonomy sec-central-index-key --resource-type entity"
+        "jst run console --relation classified_as:sic:3674 --resource-type entity"
     )
     assert any(b["key"] == "/" for b in console.to_dict()["bindings"])
     assert any(a["name"] == "taxonomy" for a in console.to_dict()["arguments"])
+    assert any(a["name"] == "relation" for a in console.to_dict()["arguments"])
     resource_type = next(
         a for a in console.to_dict()["arguments"] if a["name"] == "resource_type"
     )
@@ -45,8 +46,9 @@ def test_console_is_registered():
 def test_format_step_help_console():
     text = format_step_help(get_step("console"))
     assert "Console" in text
-    assert "jst run console --taxonomy sec-central-index-key --resource-type entity" in text
+    assert "jst run console --relation classified_as:sic:3674 --resource-type entity" in text
     assert "--taxonomy" in text
+    assert "--relation" in text
     assert "--resource-type" in text
     assert "Keybindings:" in text
     assert "/" in text
@@ -141,6 +143,16 @@ def test_resolve_pipeline_console_resource_type():
     assert both[0].kwargs == {"taxonomy": "country", "resource_type": "metric"}
     with pytest.raises(PipelineError, match="Choices"):
         resolve_pipeline(["console", "--resource-type", "observation"])
+
+
+def test_resolve_pipeline_console_relation():
+    resolved = resolve_pipeline(
+        ["console", "--relation", "classified_as:sic:3674", "--resource-type", "entity"]
+    )
+    assert resolved[0].kwargs == {
+        "relation": "classified_as:sic:3674",
+        "resource_type": "entity",
+    }
 
 
 def test_resolve_pipeline_unknown_step():

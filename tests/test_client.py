@@ -246,6 +246,19 @@ def test_search_entities_taxonomy(client, mock_url):
         assert "mode" not in qs
 
 
+def test_search_entities_relation(client, mock_url):
+    mock_data = {
+        "records": [{"id": "california", "label": "California"}]
+    }
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/search/entities", json=mock_data)
+        entities = client.search_entities(relation="part_of:united-states")
+        assert entities[0].id == "california"
+        qs = m.request_history[-1].qs
+        assert qs["relation"] == ["part_of:united-states"]
+        assert "query" not in qs
+
+
 def test_search_metrics_omits_blank_query(client, mock_url):
     with requests_mock.Mocker() as m:
         m.get(f"{mock_url}/search/metrics", json={"records": []})

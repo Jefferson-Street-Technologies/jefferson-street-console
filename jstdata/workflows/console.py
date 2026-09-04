@@ -146,6 +146,7 @@ class WorkspaceScreen(Screen):
         session: Session,
         taxonomy: str | None = None,
         resource_type: str | None = None,
+        relation: str | None = None,
     ) -> None:
         super().__init__()
         self.client = client
@@ -153,6 +154,7 @@ class WorkspaceScreen(Screen):
         self.taxonomy = taxonomy or None
         self.taxonomy_name = taxonomy
         self.resource_type = (resource_type or "").strip().lower() or None
+        self.relation = (relation or "").strip() or None
         if self.resource_type not in (None, "entity", "metric", "series"):
             self.resource_type = None
 
@@ -190,7 +192,14 @@ class WorkspaceScreen(Screen):
     def _apply_search_chrome(self) -> None:
         tax = self.taxonomy_name or self.taxonomy or ""
         rtype = self.resource_type.upper() if self.resource_type else ""
-        if tax and rtype:
+        rel = self.relation or ""
+        if rel and rtype:
+            header = f"RESULTS // {rtype} // {rel}"
+            placeholder = f"/ search {rtype.lower()} linked via {rel}…"
+        elif rel:
+            header = f"RESULTS // ENTITY // {rel}"
+            placeholder = f"/ search entities linked via {rel}…"
+        elif tax and rtype:
             header = f"RESULTS // {rtype} IN {tax}"
             placeholder = f"/ search {rtype.lower()} in {tax}…"
         elif tax:
@@ -212,6 +221,11 @@ class WorkspaceScreen(Screen):
         parts = [f"{step_id} {i}/{n}"]
         if self.taxonomy:
             parts.append(f"tax {self.taxonomy}")
+        if self.relation:
+            rel = self.relation
+            if len(rel) > 28:
+                rel = rel[:25] + "…"
+            parts.append(f"rel {rel}")
         if self.resource_type:
             parts.append(self.resource_type)
         if self.large_search_space:
@@ -275,11 +289,13 @@ class WorkspaceScreen(Screen):
     ) -> tuple[list[Entity], list[Metric], list[Series]]:
         rtype = self.resource_type
         tax = self.taxonomy
+        rel = self.relation
         if rtype == "entity":
             entities = await asyncio.to_thread(
                 self.client.search_entities,
                 None,
                 taxonomy=tax,
+                relation=rel,
                 limit=PREFETCH_LIMIT,
             )
             return list(entities), [], []
@@ -296,6 +312,20 @@ class WorkspaceScreen(Screen):
                 self.client.list_series, PREFETCH_LIMIT
             )
             return [], [], list(series)
+        if rel:
+            entities = await asyncio.to_thread(
+                self.client.search_entities,
+                None,
+                taxonomy=tax,
+                relation=rel,
+                limit=PREFETCH_LIMIT,
+            )
+            if tax:
+                metrics = await asyncio.to_thread(
+                    self.client.get_taxonomy_metrics, tax, PREFETCH_LIMIT
+                )
+                return list(entities), list(metrics), []
+            return list(entities), [], []
         if tax:
             entities, metrics = await asyncio.gather(
                 asyncio.to_thread(
@@ -366,11 +396,16 @@ class WorkspaceScreen(Screen):
 
     async def _search_remote(self, query: str) -> list[Resource]:
         tax = self.taxonomy
+        rel = self.relation
         rtype = self.resource_type
         if rtype == "entity":
             return list(
                 await asyncio.to_thread(
-                    self.client.search_entities, query, taxonomy=tax, limit=20
+                    self.client.search_entities,
+                    query,
+                    taxonomy=tax,
+                    relation=rel,
+                    limit=20,
                 )
             )
         if rtype == "metric":
@@ -383,6 +418,24 @@ class WorkspaceScreen(Screen):
             return list(
                 await asyncio.to_thread(self.client.search_series, query, limit=20)
             )
+        if rel:
+            entities = list(
+                await asyncio.to_thread(
+                    self.client.search_entities,
+                    query,
+                    taxonomy=tax,
+                    relation=rel,
+                    limit=20,
+                )
+            )
+            if tax:
+                metrics = list(
+                    await asyncio.to_thread(
+                        self.client.search_metrics, query, taxonomy=tax, limit=15
+                    )
+                )
+                return [*metrics, *entities]
+            return entities
         if tax:
             entities, metrics = await asyncio.gather(
                 asyncio.to_thread(
@@ -431,10 +484,14 @@ class WorkspaceScreen(Screen):
 
 
 def create_console_screen(
-    client, session, taxonomy=None, resource_type=None, **kwargs
+    client, session, taxonomy=None, resource_type=None, relation=None, **kwargs
 ):
     return WorkspaceScreen(
-        client, session, taxonomy=taxonomy, resource_type=resource_type
+        client,
+        session,
+        taxonomy=taxonomy,
+        resource_type=resource_type,
+        relation=relation,
     )
 
 
@@ -456,6 +513,15 @@ CONSOLE = register(
                 ),
             ),
             StepArgument(
+                name="relation",
+                type="string",
+                description=(
+                    "Restrict entity search to those linked to an anchor via a typed "
+                    "relationship (<relationship_type>:<to_entity_id>, "
+                    "e.g. classified_as:sic:3674)"
+                ),
+            ),
+            StepArgument(
                 name="resource_type",
                 type="string",
                 description="Restrict search to series, metric, or entity",
@@ -469,6 +535,8 @@ CONSOLE = register(
             StepBinding("k / ↑", "cursor_up", "Move highlight up"),
             StepBinding("escape", "leave_filter", "Leave the search field"),
         ),
-        example="jst run console --taxonomy sec-central-index-key --resource-type entity",
+        example=(
+            "jst run console --relation classified_as:sic:3674 --resource-type entity"
+        ),
     )
 )

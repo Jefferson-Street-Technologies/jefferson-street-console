@@ -243,6 +243,7 @@ def test_step_json(runner):
     data = json.loads(result.output)
     assert data["id"] == "console"
     assert any(a["name"] == "taxonomy" for a in data["arguments"])
+    assert any(a["name"] == "relation" for a in data["arguments"])
     assert any(a["name"] == "resource_type" for a in data["arguments"])
     assert any(b["key"] == "/" for b in data["bindings"])
 
