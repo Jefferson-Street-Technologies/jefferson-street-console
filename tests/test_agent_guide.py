@@ -39,7 +39,7 @@ def test_agent_guide_cli():
     assert "## Interactive steps" in out
     assert "`jst agent-guide`" in out
     assert "`jst metric search`" in out
-    assert "`jst workflows create`" in out
+    assert "`jst workflow create`" in out
     assert "`jst run`" in out
     assert "Never invent" in out
     assert "--format json" in out

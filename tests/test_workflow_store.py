@@ -92,7 +92,21 @@ def test_list_and_delete(tmp_path: Path):
         delete_workflow("solo", root=tmp_path)
 
 
-def test_cli_workflows_create_requires_double_dash(monkeypatch: pytest.MonkeyPatch):
+def test_cli_workflow_create_requires_double_dash(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["jst", "workflow", "create", "--id", "x", "console"],
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["workflow", "create", "--id", "x", "console"],
+    )
+    assert result.exit_code == 2
+    assert "after '--'" in result.output
+
+
+def test_cli_workflows_alias_still_works(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "sys.argv",
         ["jst", "workflows", "create", "--id", "x", "console"],
@@ -106,7 +120,7 @@ def test_cli_workflows_create_requires_double_dash(monkeypatch: pytest.MonkeyPat
     assert "after '--'" in result.output
 
 
-def test_cli_workflows_create_ls_rm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_cli_workflow_create_ls_rm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "jstdata.workflows.store.WORKFLOWS_DIR", tmp_path
     )
@@ -115,7 +129,7 @@ def test_cli_workflows_create_ls_rm(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     created = runner.invoke(
         cli,
         [
-            "workflows",
+            "workflow",
             "create",
             "--id",
             "gdp-rank",
@@ -135,18 +149,18 @@ def test_cli_workflows_create_ls_rm(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert "gdp-rank" in created.output
     assert (tmp_path / "gdp-rank.yaml").is_file()
 
-    listed = runner.invoke(cli, ["workflows", "ls"])
+    listed = runner.invoke(cli, ["workflow", "ls"])
     assert listed.exit_code == 0
     assert "gdp-rank" in listed.output
     assert "GDP board" in listed.output
     assert "console --taxonomy country" in listed.output
 
-    removed = runner.invoke(cli, ["workflows", "rm", "gdp-rank"])
+    removed = runner.invoke(cli, ["workflow", "rm", "gdp-rank"])
     assert removed.exit_code == 0
     assert not (tmp_path / "gdp-rank.yaml").exists()
 
 
-def test_cli_workflows_run_errors_without_ui(
+def test_cli_workflow_run_errors_without_ui(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr("jstdata.workflows.store.WORKFLOWS_DIR", tmp_path)
@@ -155,18 +169,18 @@ def test_cli_workflows_run_errors_without_ui(
         encoding="utf-8",
     )
     runner = CliRunner()
-    result = runner.invoke(cli, ["workflows", "run", "stale"])
+    result = runner.invoke(cli, ["workflow", "run", "stale"])
     assert result.exit_code != 0
     assert "Error" in result.output or "Unknown" in result.output
 
 
-def test_cli_workflows_create_overwrite_confirm(
+def test_cli_workflow_create_overwrite_confirm(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr("jstdata.workflows.store.WORKFLOWS_DIR", tmp_path)
     runner = CliRunner()
     args = [
-        "workflows",
+        "workflow",
         "create",
         "--id",
         "dup",
@@ -182,7 +196,7 @@ def test_cli_workflows_create_overwrite_confirm(
 
     again = runner.invoke(
         cli,
-        ["workflows", "create", "--id", "dup", "--description", "v2", "--", "discover"],
+        ["workflow", "create", "--id", "dup", "--description", "v2", "--", "discover"],
         input="y\n",
     )
     assert again.exit_code == 0, again.output

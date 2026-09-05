@@ -389,7 +389,7 @@ def query(
     help="Default path for export session writes",
 )
 def tutorial_cmd(session: str | None, output: str | None) -> None:
-    """Run the built-in interactive tutorial (alias for workflows run tutorial)."""
+    """Run the built-in interactive tutorial (alias for workflow run tutorial)."""
     from .workflows import run_tutorial
 
     run_tutorial(client, session_path=session, output_path=output)
@@ -484,13 +484,17 @@ def run_cmd(ctx: click.Context, session: str | None, output: str | None) -> None
         sys.exit(2)
 
 
-@cli.group("workflows")
-def workflows_group() -> None:
+@cli.group("workflow")
+def workflow_group() -> None:
     """Save and run named step pipelines."""
 
 
-@workflows_group.command("ls")
-def workflows_ls() -> None:
+# Backward-compatible plural alias (same group object).
+cli.add_command(workflow_group, "workflows")
+
+
+@workflow_group.command("ls")
+def workflow_ls() -> None:
     """List saved workflows."""
     from .workflows import (
         format_pipeline,
@@ -510,9 +514,9 @@ def workflows_ls() -> None:
         )
 
 
-@workflows_group.command("rm")
+@workflow_group.command("rm")
 @click.argument("workflow_id")
-def workflows_rm(workflow_id: str) -> None:
+def workflow_rm(workflow_id: str) -> None:
     """Delete a saved workflow."""
     from .workflows import WorkflowStoreError, delete_workflow
 
@@ -524,7 +528,7 @@ def workflows_rm(workflow_id: str) -> None:
     click.echo(f"Removed workflow {workflow_id!r}.")
 
 
-@workflows_group.command(
+@workflow_group.command(
     "create",
     context_settings={
         "ignore_unknown_options": True,
@@ -544,14 +548,14 @@ def workflows_rm(workflow_id: str) -> None:
     help="Optional short description",
 )
 @click.pass_context
-def workflows_create(
+def workflow_create(
     ctx: click.Context, workflow_id: str, description: str
 ) -> None:
     """Save a step pipeline as a named workflow.
 
     \b
-    jst workflows create --id gdp-rank -- console : rank --taxonomy country
-    jst workflows create --id gdp --description "GDP leaders" -- console : rank
+    jst workflow create --id gdp-rank -- console : rank --taxonomy country
+    jst workflow create --id gdp --description "GDP leaders" -- console : rank
     """
     import sys as _sys
 
@@ -564,16 +568,18 @@ def workflows_create(
     )
 
     # Hard boundary: pipeline must follow '--'. Enforce when this process
-    # looks like a real ``jst workflows create`` (CliRunner leaves sys.argv alone).
+    # looks like a real ``jst workflow create`` (CliRunner leaves sys.argv alone).
     try:
         create_at = _sys.argv.index("create")
-        via_workflows = "workflows" in _sys.argv[:create_at]
+        via_workflow = any(
+            name in _sys.argv[:create_at] for name in ("workflow", "workflows")
+        )
     except ValueError:
-        via_workflows = False
-    if via_workflows and "--" not in _sys.argv[create_at:]:
+        via_workflow = False
+    if via_workflow and "--" not in _sys.argv[create_at:]:
         click.echo(
             "Error: pass the pipeline after '--'.\n"
-            "Example: jst workflows create --id gdp-rank -- console : rank",
+            "Example: jst workflow create --id gdp-rank -- console : rank",
             err=True,
         )
         sys.exit(2)
@@ -604,7 +610,7 @@ def workflows_create(
     click.echo(f"Saved workflow {workflow.id!r} → {path}")
 
 
-@workflows_group.command("run")
+@workflow_group.command("run")
 @click.argument("workflow_id")
 @click.option(
     "--session",
@@ -616,14 +622,14 @@ def workflows_create(
     type=click.Path(dir_okay=False, path_type=str),
     help="Default path for export session writes",
 )
-def workflows_run(
+def workflow_run(
     workflow_id: str, session: str | None, output: str | None
 ) -> None:
     """Run a saved workflow (validates before launching the UI).
 
     \b
-    jst workflows run gdp-rank
-    jst workflows run gdp-rank --session in.json
+    jst workflow run gdp-rank
+    jst workflow run gdp-rank --session in.json
     """
     from .workflows import (
         PipelineError,

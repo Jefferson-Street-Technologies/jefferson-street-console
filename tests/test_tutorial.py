@@ -126,7 +126,7 @@ def test_cli_workflows_run_tutorial(monkeypatch):
 
     monkeypatch.setattr("jstdata.workflows.run_tutorial", fake_run_tutorial)
     runner = CliRunner()
-    result = runner.invoke(cli, ["workflows", "run", "tutorial"])
+    result = runner.invoke(cli, ["workflow", "run", "tutorial"])
     assert result.exit_code == 0, result.output
     assert called.get("ran") is True
 

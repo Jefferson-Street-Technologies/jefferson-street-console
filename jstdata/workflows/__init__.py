@@ -5,8 +5,8 @@
     jst steps
     jst step console
     jst run console : discover --mode union
-    jst workflows create --id gdp -- console : rank
-    jst workflows run gdp
+    jst workflow create --id gdp -- console : rank
+    jst workflow run gdp
 """
 
 from .base import (

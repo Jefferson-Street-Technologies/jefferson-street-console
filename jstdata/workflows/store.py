@@ -285,7 +285,7 @@ def workflow_to_tokens(workflow: SavedWorkflow) -> list[str]:
 
 
 def format_pipeline(workflow: SavedWorkflow) -> str:
-    """One-line pipeline summary for ``jst workflows ls``."""
+    """One-line pipeline summary for ``jst workflow ls``."""
     return " ".join(workflow_to_tokens(workflow))
 
 

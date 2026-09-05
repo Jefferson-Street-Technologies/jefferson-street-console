@@ -31,7 +31,7 @@ _HARD_RULES = """\
   English names. Resolve via search (or scoped list) first.
 - **Resolve before use.** Resolve ids before `jst query`, session JSON, or workflow args.
 - **Use `--format json`** on resource and search commands unless the user needs a table.
-- **Do not launch interactive TUIs** (`jst run`, `jst workflows run`) unless the user
+- **Do not launch interactive TUIs** (`jst run`, `jst workflow run`) unless the user
   explicitly asks you to operate the UI. Prepare a Session/workflow and give them the
   launch command.
 - **Do not paginate exhaustively.** During discovery, use `--limit` 20–50. Do not walk
@@ -61,7 +61,7 @@ When solving a JST research task:
    for comprehensiveness.
 5. **Escalate to deep history only after narrowing** (specific series ids, date bounds).
 6. **Hand off TUIs to the human.** Prepare Session JSON and/or a saved workflow; print
-   the `jst workflows run … --session …` (or `jst run …`) command for them.
+   the `jst workflow run … --session …` (or `jst run …`) command for them.
 7. **Prefer JSON** for anything you will parse or reason over.
 """
 
@@ -161,7 +161,7 @@ jst series observations <series-id> \\
 4. Hand them a launch command, for example:
 
 ```bash
-jst workflows run eu-analysis --session defense.json
+jst workflow run eu-analysis --session defense.json
 ```
 
 Do not substitute extra research for completing the requested handoff.
@@ -178,13 +178,13 @@ jst run STEP [ARGS...] : STEP [ARGS...] : ...
 
 - **Steps** are TUI screens for the **human**. They edit one shared session for the run.
 - **Step args** seed that step; they are not the session.
-- **Saved workflows** (`jst workflows create` / `run`) persist step topology + step args
+- **Saved workflows** (`jst workflow create` / `run`) persist step topology + step args
   only. Bake discovered metrics/entities into a **session JSON** and pass `--session`
   when running (see **Sessions**).
-- Pipeline tokens for `workflows create` must follow a `--` boundary, e.g.
-  `jst workflows create --id gdp-rank -- console : rank --taxonomy country`.
+- Pipeline tokens for `workflow create` must follow a `--` boundary, e.g.
+  `jst workflow create --id gdp-rank -- console : rank --taxonomy country`.
 
-`jst run` and `jst workflows run` launch interactive TUIs. Agents should normally prepare
+`jst run` and `jst workflow run` launch interactive TUIs. Agents should normally prepare
 the Session/workflow and provide the launch command rather than controlling the TUI.
 For step-specific help, run `jst step <id>` (or `jst step <id> --json`) on demand.
 """
@@ -231,7 +231,7 @@ Preload into a pipeline or saved workflow:
 
 ```bash
 jst run --session labor.json rank --taxonomy country
-jst workflows run gdp-rank --session labor.json
+jst workflow run gdp-rank --session labor.json
 ```
 
 `--session` copies the file into the live session at startup. The human can still
@@ -240,7 +240,7 @@ change it in the TUI. Typical agent pattern after metric discovery:
 1. Resolve metric (and taxonomy) ids via search.
 2. Write a session JSON with those `metric` ids (and optional filters).
 3. Create or reuse a workflow whose steps consume session metrics (e.g. `rank`).
-4. Hand the user: `jst workflows run <id> --session <file>.json`.
+4. Hand the user: `jst workflow run <id> --session <file>.json`.
 """
 
 
@@ -303,10 +303,16 @@ def iter_leaf_commands(
 
     def walk(cmd: click.Command, parts: list[str], ctx: click.Context) -> Iterable[tuple[str, click.Command]]:
         if isinstance(cmd, click.Group):
+            seen: set[int] = set()
             for name in sorted(cmd.list_commands(ctx)):
                 sub = cmd.get_command(ctx, name)
                 if sub is None:
                     continue
+                # Skip Click aliases that point at the same command object.
+                sub_id = id(sub)
+                if sub_id in seen:
+                    continue
+                seen.add(sub_id)
                 sub_ctx = click.Context(sub, info_name=name, parent=ctx)
                 yield from walk(sub, parts + [name], sub_ctx)
             return
@@ -398,7 +404,7 @@ def render_session_section() -> str:
         "",
         "Saved workflows do **not** store session contents. After discovering metrics or",
         "entities, write them into a session JSON and pass `--session` on `jst run` or",
-        "`jst workflows run`. Steps such as `rank` (metrics in session) and `discover`",
+        "`jst workflow run`. Steps such as `rank` (metrics in session) and `discover`",
         "(entities in session) read that staged state.",
         "",
         "### Session JSON fields",
