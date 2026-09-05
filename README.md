@@ -7,9 +7,11 @@ A Python interface and Research OS for the Jefferson Street financial and econom
 `jstdata` is built to minimize the friction between human thought and actionable data.
 
 - **Series-First**: The individual data series is the primary resource, carrying its own metadata (frequency, units, source).
-- **Entity Graph**: Entities are nodes in a relational graph, allowing you to "walk" from a company to its sector, or a country to its states.
-- **Intent over IDs**: Both the CLI and Python API favor human-readable intent (fuzzy search) over memorizing obscure slugs.
-- **Reproducible Discovery**: High-speed discovery in the CLI transitions seamlessly into immutable, reproducible code in Python Notebooks.
+- **Entity Graph**: Entities are nodes in a relational graph — walk from a company to its SIC, a security ticker, or a geography.
+- **Taxonomies**: Named populations (`country`, `sec-central-index-key`, …) scope search, query, and ranking.
+- **Intent over IDs**: CLI and Python favor fuzzy search over memorizing slugs; always resolve before querying.
+- **Sessions & workflows**: Stage resolved ids in a session JSON; compose interactive steps in the shell and save them as named workflows.
+- **Reproducible Discovery**: High-speed discovery in the TUI transitions into immutable Python / CLI snippets.
 
 ---
 
@@ -25,22 +27,17 @@ pip install .
 
 ## Authentication & Configuration
 
-Before you can query data, you need to authenticate with your Jefferson Street API key.
-
 ### Quick Start (CLI)
 
-The easiest way to get set up is using the interactive login command:
-
 ```bash
-# This will prompt for your API key and validate it
 jst login
 ```
 
-The CLI will guide you through the setup and save your credentials to `~/.jstdata/config.json` with secure permissions.
+Credentials are saved to `~/.jstdata/config.json` with secure permissions.
 
 ### Environment Variables
 
-For CI/CD or temporary sessions, you can use environment variables. These take precedence over the config file:
+These take precedence over the config file:
 
 ```bash
 export JSTDATA_API_KEY="your-api-key-here"
@@ -49,54 +46,110 @@ export JSTDATA_API_KEY="your-api-key-here"
 
 ### Managing Configuration
 
-You can view or update your configuration at any time:
-
 ```bash
-# Show current (masked) API key
 jst config show
-
-# Show advanced config (base URL)
 jst config show --verbose
-
-# Manually update a value
 jst config set api_key XXX
 ```
 
-## The TUI Workbench (`jst tui`)
+## Interactive investigation (`jst run`)
 
-The "Telescope" for your data. Launch an interactive workbench for high-density discovery.
+Compose TUI **steps** in the shell. Steps share one **Session** (staged metrics /
+entities / series + query filters) for the lifetime of the run.
 
-- **Live Fuzzy Refinement**: Type keywords to see Metrics, Entities, and Series update in real-time.
-- **Deep Drill-down**: Press `Enter` on any result to fetch associated series, graph relations, or recent observations.
-- **The Intent Bridge**:
-    - Press `c` to copy a resource ID.
-    - Press `p` to copy a fully-formed Python snippet for your Notebook.
-- **Navigation**: Vim-style `j`/`k` for scrolling, `Enter` to focus results, and `Ctrl+C` or `q` to quit.
+```bash
+# Catalog search → stage entities/metrics/series
+jst run console
+
+# Scope to a taxonomy and resource type
+jst run console --taxonomy sec-central-index-key --resource-type entity
+
+# Filter entities by typed graph edges (repeatable; OR'd)
+jst run console --relation classified_as:sic:7372 --resource-type entity
+
+# Chain steps
+jst run console --taxonomy country : discover --mode union : rank --taxonomy country
+
+# Preload a session JSON; set default export path
+jst run --session labor.json --output out.json rank --taxonomy country
+```
+
+Built-in steps:
+
+| Step | Role |
+|------|------|
+| `console` | Search catalog; stage into the session |
+| `discover` | Find metrics for session entities; preview coverage |
+| `rank` | Leaderboard entities for a session metric |
+
+Host keys (every step): `s` session · `f` find · `e` export · `n`/`p` next/prev · `?` step help · `q` quit.
+
+```bash
+jst steps
+jst step console
+jst step rank --json
+```
+
+### Saved workflows
+
+Persist step pipelines (not session contents) under `~/.jstdata/workflows/`:
+
+```bash
+jst workflow create --id gdp-rank --description "GDP board" -- \
+  console --taxonomy country : rank --taxonomy country
+
+jst workflow ls
+jst workflow run gdp-rank --session labor.json
+jst workflow rm gdp-rank
+```
+
+(`jst workflows` remains a compatibility alias.)
+
+### Tutorial
+
+```bash
+jst tutorial
+# same as: jst workflow run tutorial
+```
+
+### Agents
+
+```bash
+jst agent-guide
+```
+
+Prints a version-tied operating manual (hard rules, modes, recipes, and the live
+CLI/step reference). Prefer it over guessing command shapes or inventing ids.
 
 ## The Scriptable CLI (`jst`)
 
-A "pipe-friendly" interface designed for automation and quick extraction.
+Pipe-friendly commands for automation and quick extraction.
 
 ```bash
-# Fuzzy query by intent (latest 20 observations per series)
+# Fuzzy / set search (omit QUERY to list the matching set)
+jst metric search "defense spending" --taxonomy country --limit 20 --format json
+jst entity search --relation classified_as:sic:3674 --limit 50 --format json
+jst entity search --metric gdp --metric cpi --mode intersect --format json
+
+# Taxonomies
+jst taxonomy ls --format json
+jst taxonomy entities country --limit 20 --format json
+
+# Bounded cross-sectional query (head/tail per series)
 jst query --metric inflation --entity "United States" --frequency Monthly --tail 20
+jst query --metric gdp --taxonomy country --tail 1 --sort-by value --limit 50 --format json
 
 # Deep history for one known series
 jst series observations ABC123 --start-date 2000-01-01 --limit 1000
 
-# Explore the entity graph
-jst entity relations usa --format pretty
-
-# Search for resources
-jst series search "housing starts"
+# Entity graph
+jst entity relations cik:1045810 --format pretty
 ```
 
 ## The Python API
 
-Designed for a robust experience in Jupyter/IPython notebooks.
-
 ```python
-from jstdata import JSTDataClient
+from jstdata import JSTDataClient, Session
 
 client = JSTDataClient()
 
@@ -117,10 +170,27 @@ top = client.query(
     limit=50,
 )
 
+# Relation-scoped entity search (OR when multiple)
+entities = client.search_entities(
+    relation=["classified_as:sic:7372", "classified_as:sic:5961"],
+    taxonomy="sec-central-index-key",
+    limit=50,
+)
+
 # Deep history for one series
 obs = client.get_series_observations("ABC123", start_date="2000-01-01")
 
-# Semantic exploration
-series = client.get_entity_series("apple-inc")
-relations = client.get_entity_relations("usa")
+# Stage intent for a later `jst run` / `jst workflow run`
+session = Session(
+    metric=["gross-domestic-product"],
+    taxonomy="country",
+    tail=1,
+    sort_by="value",
+)
+session.save("labor.json")
 ```
+
+## Extending the product
+
+See [AGENTS.md](AGENTS.md) for how steps, the host, and saved workflows are
+structured when adding new interactive surface area.
