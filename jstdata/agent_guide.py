@@ -2,8 +2,7 @@
 
 CLI commands, interactive steps, and session field names are derived from the
 live Click tree, step registry, and ``Session`` dataclass. Conceptual glue
-(data model, composition, resolution, host chrome, session how-to) is static
-prose that changes rarely.
+(policy, modes, recipes, data model, sessions) is static prose that changes rarely.
 """
 
 from __future__ import annotations
@@ -20,13 +19,85 @@ from .workflows import list_steps
 
 _PACKAGE = "jstdata"
 
+# Session fields that expand the action space without helping typical agent work.
+_SESSION_FIELDS_OMIT = frozenset(
+    {"start_date", "end_date", "start_time", "end_time"}
+)
+
+_HARD_RULES = """\
+## Hard rules
+
+- **Never invent IDs.** Never invent metric, entity, taxonomy, or series ids from
+  English names. Resolve via search (or scoped list) first.
+- **Resolve before use.** Resolve ids before `jst query`, session JSON, or workflow args.
+- **Use `--format json`** on resource and search commands unless the user needs a table.
+- **Do not launch interactive TUIs** (`jst run`, `jst workflows run`) unless the user
+  explicitly asks you to operate the UI. Prepare a Session/workflow and give them the
+  launch command.
+- **Do not paginate exhaustively.** During discovery, use `--limit` 20–50. Do not walk
+  `offset` through the catalog unless the returned set is clearly insufficient.
+- **Do not enumerate** `jst metric ls`, `jst series ls`, or full taxonomy populations
+  unless the task requires enumeration. Prefer `search` with a query (and taxonomy /
+  relation filters when relevant).
+- **Do not retrieve deep history** until the candidate universe is narrowed. Use
+  `tail=1` (or similarly shallow queries) for triage.
+- **Do not create a workflow** when direct CLI analysis satisfies the request. Use
+  workflows for human handoff of an interactive investigation.
+- **Stop when good enough.** Prefer a partial useful result over open-ended search.
+"""
+
+_OPERATING_POLICY = """\
+## Default operating policy
+
+When solving a JST research task:
+
+1. **Use metadata before observations.** Resolve entities, metrics, and taxonomies
+   before querying values.
+2. **Start narrow.** Use the user's literal terminology first, then a small number of
+   obvious synonyms.
+3. **Prefer bounded calls.** Small result limits during discovery; shallow `tail` /
+   `head` when values are needed only to triage.
+4. **Prefer good-enough candidate sets** over exhaustive search unless the user asks
+   for comprehensiveness.
+5. **Escalate to deep history only after narrowing** (specific series ids, date bounds).
+6. **Hand off TUIs to the human.** Prepare Session JSON and/or a saved workflow; print
+   the `jst workflows run … --session …` (or `jst run …`) command for them.
+7. **Prefer JSON** for anything you will parse or reason over.
+"""
+
+_OPERATING_MODES = """\
+## Choose an operating mode
+
+### Catalog discovery
+
+Example: “Find metrics relevant to defense spending.”
+
+Use search / show. Do **not** retrieve observations unless needed to disambiguate
+candidates. Select a useful set and stop.
+
+### Agent analysis
+
+Example: “Compare military expenditure as a share of GDP across NATO countries.”
+
+Resolve ids → bounded `jst query` → deeper `series observations` only if needed →
+answer from structured CLI output. No TUI or workflow required.
+
+### Human handoff
+
+Example: “Set me up to explore defense spending across Europe.”
+
+Resolve resources → write Session JSON → compose/save a workflow when useful → hand
+the user the launch command. Do not substitute extra research for completing the
+handoff.
+"""
+
 _DATA_MODEL = """\
 ## Data model
 
 - **Metric** — a measurable theme (e.g. GDP, employed-persons). Identified by a slug id.
 - **Entity** — a context the metric is measured in (e.g. a country, a company). Slug id.
-- **Taxonomy** — a membership catalog that defines a population of entities
-  (e.g. `country`, `us-county`, `sec-central-index-key`). The main knob for scoping analysis.
+- **Taxonomy** — a named population of entities (e.g. `country`, `us-county`,
+  `sec-central-index-key`). Use it to scope search, query, and ranking to that population.
 - **Series** — one concrete time series: a metric observed for an entity (at a frequency).
 - **Session** — portable analytical intent (resource ids + query filters). See **Sessions**
   below. No observations live in a session file.
@@ -34,8 +105,70 @@ _DATA_MODEL = """\
 Ids are opaque slugs. Display names are not ids.
 """
 
+_RESOLUTION = """\
+## Resolution
+
+Never invent metric, entity, taxonomy, or series ids from English names.
+
+Always resolve via search (prefer a query string) before writing ids into a workflow,
+`--session` JSON, or `jst query` flags. Scope with `--taxonomy` / `--relation` when the
+user names a population or relationship. Confirm ambiguous hits with `show` before use.
+"""
+
+_RECIPES = """\
+## Common recipes
+
+### Find relevant metrics
+
+```bash
+jst metric search "defense spending" --taxonomy country --limit 20 --format json
+```
+
+If insufficient, try one or two synonyms the same way. Inspect only promising ids:
+
+```bash
+jst metric show <resolved-id> --format json
+```
+
+Stop once a useful candidate set exists. Do not page the full catalog.
+
+### Compare latest values
+
+```bash
+jst query \\
+  --metric <metric-id> \\
+  --taxonomy country \\
+  --tail 1 \\
+  --sort-by value \\
+  --limit 50 \\
+  --format json
+```
+
+### Retrieve history after narrowing
+
+```bash
+jst metric series <metric-id> --format json
+jst series observations <series-id> \\
+  --start-date 2015-01-01 \\
+  --format json
+```
+
+### Prepare a human investigation
+
+1. Resolve metric/entity/taxonomy ids via search.
+2. Write a Session JSON with those ids and filters (`taxonomy`, `tail`, …).
+3. Create or reuse a workflow if the human needs a TUI pipeline.
+4. Hand them a launch command, for example:
+
+```bash
+jst workflows run eu-analysis --session defense.json
+```
+
+Do not substitute extra research for completing the requested handoff.
+"""
+
 _COMPOSITION = """\
-## Composition
+## Composition and workflows
 
 Interactive investigation is composed in the shell, not a custom DSL:
 
@@ -43,39 +176,17 @@ Interactive investigation is composed in the shell, not a custom DSL:
 jst run STEP [ARGS...] : STEP [ARGS...] : ...
 ```
 
-- **Steps** are TUI screens that edit one shared session for the lifetime of the run.
-- **Step args** (flags declared on each step) seed that step; they are not the session.
+- **Steps** are TUI screens for the **human**. They edit one shared session for the run.
+- **Step args** seed that step; they are not the session.
 - **Saved workflows** (`jst workflows create` / `run`) persist step topology + step args
   only. Bake discovered metrics/entities into a **session JSON** and pass `--session`
   when running (see **Sessions**).
 - Pipeline tokens for `workflows create` must follow a `--` boundary, e.g.
   `jst workflows create --id gdp-rank -- console : rank --taxonomy country`.
-"""
 
-_RESOLUTION = """\
-## Resolution rule
-
-Never invent metric, entity, taxonomy, or series ids from English names.
-
-Always resolve via search or list commands (`jst metric search`, `jst entity search`,
-`jst taxonomy ls`, …) before writing ids into a workflow, `--session` JSON, or
-`jst query` flags. Prefer taxonomy-scoped search when the user names a population.
-"""
-
-_HOST_CHROME = """\
-## Host chrome
-
-Every `jst run` / `jst workflows run` process shares these keys (in addition to
-step-specific bindings shown under `?`):
-
-| Key | Action |
-|-----|--------|
-| `s` | Session modal — list / remove / inspect staged resources |
-| `f` | Find modal — search metrics or entities and add to session |
-| `e` | Export modal — copy Python/CLI or write session JSON |
-| `n` / `p` | Next / previous step in the pipeline |
-| `q` | Quit |
-| `?` | Step-specific keybindings |
+`jst run` and `jst workflows run` launch interactive TUIs. Agents should normally prepare
+the Session/workflow and provide the launch command rather than controlling the TUI.
+For step-specific help, run `jst step <id>` (or `jst step <id> --json`) on demand.
 """
 
 _SESSION_HOWTO = """\
@@ -123,10 +234,8 @@ jst run --session labor.json rank --taxonomy country
 jst workflows run gdp-rank --session labor.json
 ```
 
-`--session` copies the file into the live session at startup. The user can still
-change it in the TUI (`s` / `f`). Export with `e` to write a new JSON snapshot.
-
-Typical pattern after metric discovery:
+`--session` copies the file into the live session at startup. The human can still
+change it in the TUI. Typical agent pattern after metric discovery:
 
 1. Resolve metric (and taxonomy) ids via search.
 2. Write a session JSON with those `metric` ids (and optional filters).
@@ -229,6 +338,8 @@ def _format_step_args(spec) -> str:
     for arg in spec.arguments:
         flag = arg.flag()
         piece = f"`{flag}`"
+        if arg.multiple:
+            piece += " (repeatable)"
         if arg.required:
             piece += " (required)"
         elif arg.default is not None:
@@ -267,15 +378,11 @@ _SESSION_FIELD_NOTES: dict[str, str] = {
     "entity": "Resolved entity slug ids",
     "series": "Resolved series slug ids (when targeting series directly)",
     "frequency": "Optional frequency filter (Annual, Quarterly, Monthly, Daily, Intraday)",
-    "taxonomy": "Population scope; entity membership catalog slug",
+    "taxonomy": "Restrict analysis to entities in this population (taxonomy slug)",
     "head": "Earliest N observations per series for `/query`",
     "tail": "Latest N observations per series for `/query`",
     "as_of": "Timezone-aware ISO-8601 cutoff on release_timestamp",
     "sort_by": "`id` (default) or `value` (desc) for `/query` ordering",
-    "start_date": "Legacy/deep-history field; not sent to `/query`",
-    "end_date": "Legacy/deep-history field; not sent to `/query`",
-    "start_time": "Legacy/deep-history field; not sent to `/query`",
-    "end_time": "Legacy/deep-history field; not sent to `/query`",
     "order_by": "Observation order preference where applicable (`asc`/`desc`)",
 }
 
@@ -296,13 +403,15 @@ def render_session_section() -> str:
         "",
         "### Session JSON fields",
         "",
-        "Derived from the installed `Session` model. Write a UTF-8 JSON object;",
-        "`Session.save` / `Session.load` use this shape.",
+        "Primary fields for agent-written sessions (from the installed `Session` model).",
+        "Prefer `head` / `tail` / `as_of` for query windows. Omit unused fields.",
         "",
         "| Field | Type | Notes |",
         "|-------|------|-------|",
     ]
     for f in fields(Session):
+        if f.name in _SESSION_FIELDS_OMIT:
+            continue
         note = _SESSION_FIELD_NOTES.get(f.name, "")
         lines.append(
             f"| `{_md_cell(f.name)}` | {_md_cell(_annotation_label(f.type))} | {_md_cell(note)} |"
@@ -317,7 +426,9 @@ def render_steps_section() -> str:
     lines = [
         "## Interactive steps",
         "",
-        "Atoms for `jst run` / saved workflows. Order-agnostic: any step accepts an empty or arbitrary session.",
+        "Atoms for `jst run` / saved workflows (human-facing TUIs). Order-agnostic: any",
+        "step accepts an empty or arbitrary session. Do not operate these UIs yourself;",
+        "use `jst step <id>` if you need details while helping a human.",
         "",
         "| Id | Name | Description | Arguments | Example |",
         "|----|------|-------------|-----------|---------|",
@@ -357,22 +468,15 @@ def render_steps_section() -> str:
                 default = (
                     f", default `{arg.default}`" if arg.default is not None else ""
                 )
+                multi = ", repeatable" if arg.multiple else ""
                 lines.append(
-                    f"- `{arg.flag()}` ({arg.type}, {req}{default}): {arg.description}"
+                    f"- `{arg.flag()}` ({arg.type}, {req}{multi}{default}): "
+                    f"{arg.description}"
                 )
                 if arg.choices:
                     lines.append(
                         f"  - Choices: {', '.join(f'`{c}`' for c in arg.choices)}"
                     )
-            lines.append("")
-        visible = [b for b in spec.bindings if b.show_in_help]
-        if visible:
-            lines.append("Step keybindings:")
-            lines.append("")
-            lines.append("| Key | Description |")
-            lines.append("|-----|-------------|")
-            for b in visible:
-                lines.append(f"| `{_md_cell(b.key)}` | {_md_cell(b.description)} |")
             lines.append("")
         example = spec.example or f"jst run {spec.id}"
         lines.append(f"Example: `{example}`")
@@ -385,26 +489,36 @@ def render_agent_guide(cli_group: click.Group) -> str:
     sections = [
         f"# jstdata agent guide (v{ver})",
         "",
-        "Bootstrap knowledge for agents helping a user with this installed CLI. "
-        "Prefer this document over guessing command shapes or resource ids.",
+        "Operating manual for agents helping a user with this installed CLI. "
+        "Prefer this document over guessing command shapes or resource ids. "
+        "Follow **Hard rules** and **Choose an operating mode** before browsing the "
+        "full command tables.",
+        "",
+        _HARD_RULES.rstrip(),
+        "",
+        _OPERATING_POLICY.rstrip(),
+        "",
+        _OPERATING_MODES.rstrip(),
         "",
         _DATA_MODEL.rstrip(),
         "",
-        _COMPOSITION.rstrip(),
-        "",
         _RESOLUTION.rstrip(),
         "",
-        _HOST_CHROME.rstrip(),
+        _RECIPES.rstrip(),
+        "",
+        _COMPOSITION.rstrip(),
         "",
         render_session_section(),
         "",
+        render_steps_section(),
+        "",
         "## CLI commands",
         "",
-        "One row per leaf command, derived from the installed CLI.",
+        "One row per leaf command, derived from the installed CLI. Prefer the recipes "
+        "and hard rules above; use this table to confirm flags, not as a checklist to "
+        "execute.",
         "",
         render_commands_table(cli_group),
-        "",
-        render_steps_section(),
         "",
     ]
     return "\n".join(sections)

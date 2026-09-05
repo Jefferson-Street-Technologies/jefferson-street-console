@@ -631,8 +631,7 @@ RANK = register(
                 name="taxonomy",
                 type="string",
                 description=(
-                    "Optional population bound: only series whose entities "
-                    "have an identity relation to this taxonomy"
+                    "Restrict ranking to entities in this taxonomy"
                 ),
             ),
         ),
