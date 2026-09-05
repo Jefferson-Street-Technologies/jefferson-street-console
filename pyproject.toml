@@ -5,6 +5,7 @@ description = "A Python interface to the Jefferson Street REST API."
 authors = ["Mahfuj Ahbab"]
 readme = "README.md"
 license = "MIT"
+include = ["jstdata/workflows/bundled/*.yaml"]
 homepage = "https://github.com/mahfuj/python_api"
 repository = "https://github.com/mahfuj/python_api"
 keywords = ["api", "cli", "data", "jefferson street"]
@@ -25,6 +26,7 @@ pandas = "^2.3.1"
 tabulate = "^0.9.0"
 textual = "^1.0.0"
 pyperclip = "^1.9.0"
+pyyaml = "^6.0.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"

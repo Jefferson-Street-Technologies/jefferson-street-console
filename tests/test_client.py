@@ -1,14 +1,15 @@
 import pytest
 import requests
 import requests_mock
-from datetime import datetime
+from datetime import datetime, timezone
 
 from jstdata.client import (
     ApiKeyNotSetError,
     InvalidApiKeyError,
+    InvalidInputError,
     JSTDataClient
 )
-from jstdata.models import Series, Entity, Metric, Observation
+from jstdata.models import Series, Entity, Metric, Observation, Taxonomy, TimeSeries
 
 
 @pytest.fixture
@@ -74,50 +75,101 @@ def test_get_series(client, mock_url):
         assert series.entities[0].id == "usa"
 
 
-def test_query(client, mock_url):
-    """Test query method."""
-    mock_data = {
-        "records": [
+def _query_record():
+    return {
+        "id": "ABC123",
+        "label": "GDP USA",
+        "frequency": "Quarterly",
+        "source": "BEA",
+        "units": "USD",
+        "seasonal_adjustment": "",
+        "last_updated": "2024-01-01T00:00:00",
+        "metric_id": "gdp",
+        "entities": [{"id": "usa", "label": "USA"}],
+        "observations": [
             {
-                "series_id": "ABC123",
-                "entities": ["usa"],
-                "observations": [
-                    {
-                        "observation_timestamp": "2024-01-01T00:00:00",
-                        "release_timestamp": "2024-01-01T00:00:00",
-                        "value": 100.0
-                    }
-                ]
+                "observation_timestamp": "2024-01-01T00:00:00",
+                "release_timestamp": "2024-01-01T00:00:00",
+                "value": 100.0,
             }
-        ]
+        ],
     }
+
+
+def test_query(client, mock_url):
+    """Test query method defaults to tail and returns TimeSeries."""
+    mock_data = {"records": [_query_record()]}
     with requests_mock.Mocker() as m:
         m.get(f"{mock_url}/query", json=mock_data)
         results = client.query(metric="gdp", entity="usa")
         assert len(results) == 1
-        assert isinstance(results[0], Observation)
-        assert results[0].value == 100.0
-        assert results[0].series_id == "ABC123"
-        assert results[0].entity_id == "usa"
+        assert isinstance(results[0], TimeSeries)
+        assert results[0].series.id == "ABC123"
+        assert results[0].observations[0].value == 100.0
+        qs = m.request_history[-1].qs
+        assert qs["tail"] == ["20"]
+        assert "head" not in qs
+        assert "start_date" not in qs
+
+
+def test_query_limit_offset(client, mock_url):
+    mock_data = {"records": []}
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/query", json=mock_data)
+        results = client.query(metric="gdp", entity="usa", limit=50, offset=10)
+        assert results == []
+        qs = m.request_history[-1].qs
+        assert qs["limit"] == ["50"]
+        assert qs["offset"] == ["10"]
+        assert qs["tail"] == ["20"]
+
+
+def test_query_rejects_head_and_tail(client):
+    with pytest.raises(InvalidInputError, match="head"):
+        client.query(metric="gdp", head=10, tail=10)
+
+
+def test_query_rejects_invalid_sort_by(client):
+    with pytest.raises(InvalidInputError, match="sort_by"):
+        client.query(metric="gdp", sort_by="mean")
+
+
+def test_query_as_of(client, mock_url):
+    mock_data = {"records": []}
+    as_of = datetime(2020, 3, 1, tzinfo=timezone.utc)
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/query", json=mock_data)
+        client.query(metric="gdp", tail=1, as_of=as_of)
+        qs = m.request_history[-1].qs
+        assert qs["tail"] == ["1"]
+        assert "as_of" in qs
+
+
+def test_query_sort_by_value_and_taxonomy(client, mock_url):
+    mock_data = {"records": []}
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/query", json=mock_data)
+        client.query(
+            metric="gdp",
+            taxonomy="country",
+            frequency="Annual",
+            tail=1,
+            sort_by="value",
+            limit=50,
+            offset=0,
+        )
+        qs = m.request_history[-1].qs
+        assert qs["taxonomy"] == ["country"]
+        assert qs["frequency"] == ["annual"]  # requests_mock lowercases values
+        assert qs["tail"] == ["1"]
+        assert qs["sort_by"] == ["value"]
+        assert qs["limit"] == ["50"]
+        assert qs["offset"] == ["0"]
 
 
 def test_query_df(client, mock_url):
-    """Test query_df method."""
-    mock_data = {
-        "records": [
-            {
-                "series_id": "ABC123",
-                "entities": ["usa"],
-                "observations": [
-                    {
-                        "observation_timestamp": "2024-01-01T00:00:00",
-                        "release_timestamp": "2024-01-01T00:00:00",
-                        "value": 100.0
-                    }
-                ]
-            }
-        ]
-    }
+    """Test query_df flattens nested TimeSeries observations."""
+    mock_data = {"records": [_query_record()]}
     with requests_mock.Mocker() as m:
         m.get(f"{mock_url}/query", json=mock_data)
         df = client.query_df(metric="gdp")
@@ -127,3 +179,143 @@ def test_query_df(client, mock_url):
         assert df.iloc[0]["value"] == 100.0
         assert df.iloc[0]["series_id"] == "ABC123"
         assert df.iloc[0]["entity_id"] == "usa"
+
+
+def test_get_series_observations(client, mock_url):
+    mock_data = {
+        "series_id": "ABC123",
+        "limit": 1000,
+        "offset": 0,
+        "observations": [
+            {
+                "observation_timestamp": "2024-01-01T00:00:00",
+                "release_timestamp": "2024-01-01T00:00:00",
+                "value": 100.0,
+            }
+        ],
+    }
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/series/ABC123/observations", json=mock_data)
+        results = client.get_series_observations(
+            "ABC123", start_date="2000-01-01", limit=1000
+        )
+        assert len(results) == 1
+        assert isinstance(results[0], Observation)
+        assert results[0].series_id == "ABC123"
+        assert results[0].value == 100.0
+        qs = m.request_history[-1].qs
+        assert qs["start_date"] == ["2000-01-01"]
+        assert qs["limit"] == ["1000"]
+
+
+def test_list_taxonomies(client, mock_url):
+    mock_data = {
+        "records": [
+            {"id": "sec-central-index-key", "name": "SEC Central Index Key"}
+        ]
+    }
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/taxonomy", json=mock_data)
+        taxonomies = client.list_taxonomies()
+        assert len(taxonomies) == 1
+        assert isinstance(taxonomies[0], Taxonomy)
+        assert taxonomies[0].id == "sec-central-index-key"
+
+
+def test_get_taxonomy_entities(client, mock_url):
+    mock_data = {
+        "records": [{"id": "cik:320193", "label": "Apple Inc."}]
+    }
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/taxonomy/sec-central-index-key/entities", json=mock_data)
+        entities = client.get_taxonomy_entities("sec-central-index-key")
+        assert entities[0].id == "cik:320193"
+
+
+def test_search_entities_taxonomy(client, mock_url):
+    mock_data = {
+        "records": [{"id": "california", "label": "California"}]
+    }
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/search/entities", json=mock_data)
+        entities = client.search_entities("calif", taxonomy="us-state-or-territory")
+        assert entities[0].id == "california"
+        qs = m.request_history[-1].qs
+        assert qs["taxonomy"] == ["us-state-or-territory"]
+        assert qs["query"] == ["calif"]
+        assert "mode" not in qs
+
+
+def test_search_entities_relation(client, mock_url):
+    mock_data = {
+        "records": [{"id": "california", "label": "California"}]
+    }
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/search/entities", json=mock_data)
+        entities = client.search_entities(relation="part_of:united-states")
+        assert entities[0].id == "california"
+        qs = m.request_history[-1].qs
+        assert qs["relation"] == ["part_of:united-states"]
+        assert "query" not in qs
+
+
+def test_search_entities_multiple_relations(client, mock_url):
+    mock_data = {
+        "records": [{"id": "cik:1045810", "label": "NVIDIA CORP"}]
+    }
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/search/entities", json=mock_data)
+        entities = client.search_entities(
+            relation=["classified_as:sic:3674", "has_security:ticker:NVDA"]
+        )
+        assert entities[0].id == "cik:1045810"
+        # requests_mock lowercases query values
+        qs = m.request_history[-1].qs
+        assert sorted(qs["relation"]) == sorted(
+            ["classified_as:sic:3674", "has_security:ticker:nvda"]
+        )
+
+
+def test_search_metrics_omits_blank_query(client, mock_url):
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/search/metrics", json={"records": []})
+        client.search_metrics("", entity="united-states", limit=100)
+        qs = m.request_history[-1].qs
+        assert "query" not in qs
+        assert qs["entity"] == ["united-states"]
+        assert qs["mode"] == ["union"]
+        assert qs["limit"] == ["100"]
+
+
+def test_search_metrics_multiple_entities_and_mode(client, mock_url):
+    mock_data = {"records": [{"id": "gdp", "name": "GDP"}]}
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/search/metrics", json=mock_data)
+        metrics = client.search_metrics(
+            entity=["france", "germany"],
+            mode="intersect",
+            limit=100,
+            offset=20,
+        )
+        assert metrics[0].id == "gdp"
+        qs = m.request_history[-1].qs
+        assert "query" not in qs
+        assert qs["entity"] == ["france", "germany"]
+        assert qs["mode"] == ["intersect"]
+        assert qs["offset"] == ["20"]
+
+
+def test_search_entities_multiple_metrics(client, mock_url):
+    mock_data = {"records": [{"id": "france", "label": "France"}]}
+    with requests_mock.Mocker() as m:
+        m.get(f"{mock_url}/search/entities", json=mock_data)
+        entities = client.search_entities(
+            "paris",
+            metric=["gdp", "cpi"],
+            mode="union",
+        )
+        assert entities[0].id == "france"
+        qs = m.request_history[-1].qs
+        assert qs["query"] == ["paris"]
+        assert qs["metric"] == ["cpi", "gdp"] or qs["metric"] == ["gdp", "cpi"]
+        assert qs["mode"] == ["union"]

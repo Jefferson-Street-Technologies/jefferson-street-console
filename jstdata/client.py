@@ -1,7 +1,8 @@
 import hashlib
 import json
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -16,10 +17,16 @@ from .models import (
     Series,
     TimeSeries,
     Resource,
+    Taxonomy,
 )
 
 APP_DIR = Path.home() / ".jstdata"
 CONFIG_FILE = APP_DIR / "config.json"
+
+DEFAULT_QUERY_TAIL = 20
+DEFAULT_QUERY_SERIES_LIMIT = 50
+MAX_QUERY_SERIES_LIMIT = 50
+MAX_QUERY_OBSERVATION_DEPTH = 100
 
 
 class ApiKeyNotSetError(Exception):
@@ -28,6 +35,25 @@ class ApiKeyNotSetError(Exception):
 
 class InvalidApiKeyError(Exception):
     pass
+
+
+def _as_id_list(value: Optional[Union[str, List[str]]]) -> Optional[List[str]]:
+    """Normalize a search/query id argument to a non-empty list."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return [value] if value else None
+    items = [v for v in value if v]
+    return items or None
+
+
+def _format_as_of(value: Union[str, datetime]) -> str:
+    """ISO-8601 timestamp; naive datetimes are treated as UTC."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
+    return str(value)
 
 
 class InvalidInputError(Exception):
@@ -272,6 +298,40 @@ class JSTDataClient:
         )
         return [EntityRelationship.from_dict(r) for r in data["records"]]
 
+    # --- Taxonomies ---
+
+    def list_taxonomies(
+        self, limit: int = 100, offset: int = 0, sort_order: str = "asc"
+    ) -> List[Taxonomy]:
+        """List taxonomies that have identity (membership) relationships."""
+        data = self.make_request(
+            "taxonomy", {"limit": limit, "offset": offset, "sort_order": sort_order}
+        )
+        return [Taxonomy.from_dict(t) for t in data["records"]]
+
+    def get_taxonomy(self, taxonomy_id: str) -> Taxonomy:
+        """Get details for a specific taxonomy."""
+        data = self.make_request(f"taxonomy/{taxonomy_id}")
+        return Taxonomy.from_dict(data)
+
+    def get_taxonomy_entities(
+        self, taxonomy_id: str, limit: int = 100, offset: int = 0
+    ) -> List[Entity]:
+        """List entities that themselves participate in a taxonomy."""
+        data = self.make_request(
+            f"taxonomy/{taxonomy_id}/entities", {"limit": limit, "offset": offset}
+        )
+        return [Entity.from_dict(e) for e in data["records"]]
+
+    def get_taxonomy_metrics(
+        self, taxonomy_id: str, limit: int = 100, offset: int = 0
+    ) -> List[Metric]:
+        """List metrics with series on entities in a taxonomy."""
+        data = self.make_request(
+            f"taxonomy/{taxonomy_id}/metrics", {"limit": limit, "offset": offset}
+        )
+        return [Metric.from_dict(m) for m in data["records"]]
+
     # --- Search ---
 
     def search(
@@ -293,27 +353,63 @@ class JSTDataClient:
         return results
 
     def search_entities(
-        self, query: str, metric: Optional[str] = None, limit: int = 5, offset: int = 0
+        self,
+        query: Optional[str] = None,
+        metric: Optional[Union[str, List[str]]] = None,
+        taxonomy: Optional[str] = None,
+        relation: Optional[Union[str, List[str]]] = None,
+        mode: str = "union",
+        limit: int = 5,
+        offset: int = 0,
     ) -> List[Entity]:
-        """Search for entities."""
-        params = {"query": query, "limit": limit, "offset": offset}
-        if metric:
-            params["metric"] = metric
-        data = self.make_request(
-            "search/entities", params
-        )
+        """Search or list entities.
+
+        Omit ``query`` (or pass blank) to list the matching set in label order.
+        ``metric`` may be one id or many; ``mode`` is ``union`` or ``intersect``
+        when more than one metric is given.
+        ``relation`` filters to entities with a typed edge to an anchor
+        (``<relationship_type>:<to_entity_id>``). Multiple relations are OR'd.
+        """
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if query is not None and str(query).strip():
+            params["query"] = query
+        metrics = _as_id_list(metric)
+        if metrics:
+            params["metric"] = metrics
+            params["mode"] = mode
+        if taxonomy:
+            params["taxonomy"] = taxonomy
+        relations = _as_id_list(relation)
+        if relations:
+            params["relation"] = relations
+        data = self.make_request("search/entities", params)
         return [Entity.from_dict(e) for e in data["records"]]
 
     def search_metrics(
-        self, query: str, entity: Optional[str] = None, limit: int = 5, offset: int = 0
+        self,
+        query: Optional[str] = None,
+        entity: Optional[Union[str, List[str]]] = None,
+        taxonomy: Optional[str] = None,
+        mode: str = "union",
+        limit: int = 5,
+        offset: int = 0,
     ) -> List[Metric]:
-        """Search for metrics."""
-        params = {"query": query, "limit": limit, "offset": offset}
-        if entity:
-            params["entity"] = entity
-        data = self.make_request(
-            "search/metrics", params
-        )
+        """Search or list metrics.
+
+        Omit ``query`` (or pass blank) to list the matching set in name order.
+        ``entity`` may be one id or many; ``mode`` is ``union`` or ``intersect``
+        when more than one entity is given.
+        """
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if query is not None and str(query).strip():
+            params["query"] = query
+        entities = _as_id_list(entity)
+        if entities:
+            params["entity"] = entities
+            params["mode"] = mode
+        if taxonomy:
+            params["taxonomy"] = taxonomy
+        data = self.make_request("search/metrics", params)
         return [Metric.from_dict(m) for m in data["records"]]
 
     def search_series(
@@ -333,32 +429,82 @@ class JSTDataClient:
         entity: Optional[Union[str, List[str]]] = None,
         series: Optional[Union[str, List[str]]] = None,
         frequency: Optional[str] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
-        order_by: Optional[str] = None
+        taxonomy: Optional[str] = None,
+        head: Optional[int] = None,
+        tail: Optional[int] = None,
+        as_of: Optional[Union[str, datetime]] = None,
+        sort_by: Optional[str] = None,
+        order_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
     ) -> List[TimeSeries]:
+        """Bounded cross-sectional observations (``GET /query``).
+
+        Exactly one of ``head`` or ``tail`` is sent. If neither is given,
+        ``tail`` defaults to ``DEFAULT_QUERY_TAIL``. Time ranges are not
+        accepted here; use :meth:`get_series_observations` for history.
+        ``limit`` / ``offset`` paginate series, not observations.
+
+        ``sort_by`` is ``id`` (default catalog order) or ``value`` (rank by
+        the chronologically last observation in each series' window,
+        descending). ``taxonomy`` restricts to series whose entities have an
+        identity relation to that taxonomy.
         """
-        Query for observations. This is the main data extraction method.
-        """
-        params = {
+        if head is not None and tail is not None:
+            raise InvalidInputError("Provide exactly one of 'head' or 'tail'.")
+        if head is None and tail is None:
+            tail = DEFAULT_QUERY_TAIL
+        if sort_by is not None and sort_by not in ("id", "value"):
+            raise InvalidInputError("'sort_by' must be 'id' or 'value'.")
+
+        params: Dict[str, Any] = {
             "metric": metric,
             "entity": entity,
             "series": series,
             "frequency": frequency,
-            "start_date": start_date,
-            "end_date": end_date,
+            "taxonomy": taxonomy,
+            "head": head,
+            "tail": tail,
+            "sort_by": sort_by,
             "order_by": order_by,
-            "start_time": start_time,
-            "end_time": end_time
+            "limit": limit,
+            "offset": offset,
         }
-        # Filter out None values
+        if as_of is not None:
+            params["as_of"] = _format_as_of(as_of)
         params = {k: v for k, v in params.items() if v is not None}
 
         data = self.make_request("query", params)
-        series = [TimeSeries.from_dict(record) for record in data.get("records", [])]
-        return series
+        return [TimeSeries.from_dict(record) for record in data.get("records", [])]
+
+    def get_series_observations(
+        self,
+        series_id: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        order_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Observation]:
+        """Paginated history for one series (``GET /series/{id}/observations``)."""
+        params: Dict[str, Any] = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "start_time": start_time,
+            "end_time": end_time,
+            "order_by": order_by,
+            "limit": limit,
+            "offset": offset,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+        data = self.make_request(f"series/{series_id}/observations", params)
+        sid = data.get("series_id", series_id)
+        return [
+            Observation.from_dict(dict(o, series_id=sid))
+            for o in data.get("observations", [])
+        ]
 
     def get_resources(self, resource: Union[str, List[str]]) -> List[Resource]:
         """Get details for a specific metric."""
@@ -368,17 +514,30 @@ class JSTDataClient:
             records.append(Resource(id=r["id"], label=r["label"]))
         return records
 
-
     def query_df(self, **kwargs) -> pd.DataFrame:
-        """
-        Convenience method that returns the query results as a single flattened pandas DataFrame.
-        Excellent for notebook usage.
-        """
-        observations = self.query(**kwargs)
-        if not observations:
-            return pd.DataFrame()
-
-        df = pd.DataFrame([asdict(o) for o in observations])
+        """Flatten ``query`` results to one row per observation."""
+        results = self.query(**kwargs)
+        rows: List[Dict[str, Any]] = []
+        for ts in results:
+            entity_id = ",".join(e.id for e in ts.series.entities)
+            for obs in ts.observations:
+                rows.append(
+                    {
+                        "series_id": ts.series.id,
+                        "series_label": ts.series.label,
+                        "metric_id": ts.series.metric_id,
+                        "entity_id": entity_id,
+                        "frequency": ts.series.frequency,
+                        "units": ts.series.units,
+                        "source": ts.series.source,
+                        "observation_timestamp": obs.observation_timestamp,
+                        "release_timestamp": obs.release_timestamp,
+                        "value": obs.value,
+                    }
+                )
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return df
         df["observation_timestamp"] = pd.to_datetime(df["observation_timestamp"])
         df["release_timestamp"] = pd.to_datetime(df["release_timestamp"])
         return df

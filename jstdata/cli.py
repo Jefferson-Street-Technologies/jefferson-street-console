@@ -105,11 +105,30 @@ def show_metric(id, format):
     format_and_print(results, format)
 
 @metric.command("search")
-@click.argument("query")
+@click.argument("query", required=False, default=None)
+@click.option("--taxonomy", help="Restrict search to metrics with series in a taxonomy")
+@click.option(
+    "--entity",
+    multiple=True,
+    help="Restrict to metrics associated with these entities. Repeatable.",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["union", "intersect"]),
+    default="union",
+    help="How to combine multiple --entity values",
+)
 @common_search_params
-def search_metrics(query, limit, offset, format):
-    """Search for metrics by intent."""
-    results = client.search_metrics(query, limit=limit, offset=offset)
+def search_metrics(query, taxonomy, entity, mode, limit, offset, format):
+    """Search for metrics by intent. Omit QUERY to list the matching set."""
+    results = client.search_metrics(
+        query,
+        entity=list(entity) or None,
+        taxonomy=taxonomy,
+        mode=mode,
+        limit=limit,
+        offset=offset,
+    )
     format_and_print(results, format)
 
 @metric.command("series")
@@ -135,11 +154,36 @@ def show_entity(id, format):
     format_and_print(results, format)
 
 @entity.command("search")
-@click.argument("query")
+@click.argument("query", required=False, default=None)
+@click.option("--taxonomy", help="Restrict search to entities in a taxonomy")
+@click.option(
+    "--relation",
+    multiple=True,
+    help="Filter by relationship anchor (<relationship_type>:<to_entity_id>). Repeatable; OR'd.",
+)
+@click.option(
+    "--metric",
+    multiple=True,
+    help="Restrict to entities associated with these metrics. Repeatable.",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["union", "intersect"]),
+    default="union",
+    help="How to combine multiple --metric values",
+)
 @common_search_params
-def search_entities(query, limit, offset, format):
-    """Search for entities by intent."""
-    results = client.search_entities(query, limit=limit, offset=offset)
+def search_entities(query, taxonomy, relation, metric, mode, limit, offset, format):
+    """Search for entities by intent. Omit QUERY to list the matching set."""
+    results = client.search_entities(
+        query,
+        metric=list(metric) or None,
+        taxonomy=taxonomy,
+        relation=list(relation) or None,
+        mode=mode,
+        limit=limit,
+        offset=offset,
+    )
     format_and_print(results, format)
 
 @entity.command("series")
@@ -156,6 +200,43 @@ def entity_series(id, limit, offset, format):
 def entity_relations(id, limit, offset, format):
     """Walk the entity graph."""
     results = client.get_entity_relations(id, limit=limit, offset=offset)
+    format_and_print(results, format)
+
+# --- Taxonomy Commands ---
+
+@cli.group()
+def taxonomy():
+    """Commands for interacting with Taxonomies (membership catalogs)."""
+
+@taxonomy.command("ls")
+@common_params
+def list_taxonomies(limit, offset, format):
+    """List available taxonomies."""
+    results = client.list_taxonomies(limit=limit, offset=offset)
+    format_and_print(results, format)
+
+@taxonomy.command("show")
+@click.argument("id")
+@click.option("--format", default="pretty")
+def show_taxonomy(id, format):
+    """Show details for a specific taxonomy."""
+    results = client.get_taxonomy(id)
+    format_and_print(results, format)
+
+@taxonomy.command("entities")
+@click.argument("id")
+@common_params
+def taxonomy_entities(id, limit, offset, format):
+    """List entities that participate in a taxonomy."""
+    results = client.get_taxonomy_entities(id, limit=limit, offset=offset)
+    format_and_print(results, format)
+
+@taxonomy.command("metrics")
+@click.argument("id")
+@common_params
+def taxonomy_metrics(id, limit, offset, format):
+    """List metrics with series on entities in a taxonomy."""
+    results = client.get_taxonomy_metrics(id, limit=limit, offset=offset)
     format_and_print(results, format)
 
 # --- Series Commands ---
@@ -187,6 +268,35 @@ def search_series(query, limit, offset, format):
     results = client.search_series(query, limit=limit, offset=offset)
     format_and_print(results, format)
 
+@series.command("observations")
+@click.argument("id")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option("--start-time", type=int, help="Start time (unix timestamp)")
+@click.option("--end-time", type=int, help="End time (unix timestamp)")
+@click.option(
+    "--order-by",
+    type=click.Choice(["asc", "desc"]),
+    default="asc",
+    help="Sort observations by timestamp",
+)
+@common_params
+def series_observations(
+    id, start_date, end_date, start_time, end_time, order_by, limit, offset, format
+):
+    """Paginated history for one series."""
+    results = client.get_series_observations(
+        id,
+        start_date=start_date,
+        end_date=end_date,
+        start_time=start_time,
+        end_time=end_time,
+        order_by=order_by,
+        limit=limit,
+        offset=offset,
+    )
+    format_and_print(results, format)
+
 # --- Query Command ---
 
 @cli.command()
@@ -194,15 +304,53 @@ def search_series(query, limit, offset, format):
 @click.option("--entity", multiple=True, help="Entity ID(s) or keywords")
 @click.option("--series", multiple=True, help="Series ID(s) or keywords")
 @click.option("--frequency", type=click.Choice(["Annual", "Quarterly", "Monthly", "Daily", "Intraday"]))
-@click.option("--start-date", help="Start date (YYYY-MM-DD)")
-@click.option("--end-date", help="End date (YYYY-MM-DD)")
-@click.option("--start-time", help="Start time (unix timestamp)")
-@click.option("--end-time", help="End time (unix timestamp)")
+@click.option(
+    "--taxonomy",
+    help="Restrict to series whose entities have an identity relation to this taxonomy",
+)
+@click.option("--head", type=int, help="Earliest N observations per series")
+@click.option("--tail", type=int, help="Latest N observations per series (default 20)")
+@click.option("--as-of", "as_of", help="Timezone-aware ISO-8601 cutoff (release_timestamp)")
+@click.option(
+    "--sort-by",
+    "sort_by",
+    type=click.Choice(["id", "value"]),
+    default="id",
+    help="Order series by id (default) or by last value in the window (desc)",
+)
 @click.option("--fuzzy", is_flag=True, default=True, help="Try to resolve keywords to IDs automatically")
-@common_params
-def query(metric, entity, series, frequency, start_date, end_date, start_time, end_time, fuzzy, limit, offset, format):
+@click.option(
+    "--limit",
+    default=50,
+    help="Maximum number of series to return (default: 50, max: 50)",
+)
+@click.option("--offset", default=0, help="Number of series to skip (default: 0)")
+@click.option(
+    "--format",
+    default="pretty",
+    help="Output format. Valid formats are: json, csv, pretty.",
+)
+def query(
+    metric,
+    entity,
+    series,
+    frequency,
+    taxonomy,
+    head,
+    tail,
+    as_of,
+    sort_by,
+    fuzzy,
+    limit,
+    offset,
+    format,
+):
     """
-    The unified query engine. Mix and match metrics, entities, and series.
+    Bounded cross-sectional query. Mix metrics, entities, and series.
+
+    Uses head/tail per series (not a date window). For deep history of one
+    series, use `jst series observations`. Use --sort-by value with
+    --taxonomy to rank a population (e.g. country GDP).
     """
     m_ids = list(metric)
     e_ids = list(entity)
@@ -218,39 +366,301 @@ def query(metric, entity, series, frequency, start_date, end_date, start_time, e
         entity=e_ids or None,
         series=s_ids or None,
         frequency=frequency,
-        start_date=start_date,
-        end_date=end_date,
-        start_time=start_time,
+        taxonomy=taxonomy,
+        head=head,
+        tail=tail,
+        as_of=as_of,
+        sort_by=sort_by,
         limit=limit,
-        offset=offset
+        offset=offset,
     )
     
     format_and_print(results, format)
 
-@cli.command()
-def tui():
-    """
-    Launch the interactive TUI workbench.
-    """
-    from .tui import JSTDataApp
-    app = JSTDataApp(client)
-    app.run()
-
-@cli.command()
+@cli.command("tutorial")
 @click.option(
     "--session",
     type=click.Path(exists=True, dir_okay=False, path_type=str),
-    help="Load a saved session state from a JSON file",
+    help="Preload a session JSON into the pipeline",
 )
-def console(session: str | None) -> None:
-    """Launch the high-density TUI workbench."""
-    from .tui import JSTDataApp
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=str),
+    help="Default path for export session writes",
+)
+def tutorial_cmd(session: str | None, output: str | None) -> None:
+    """Run the built-in interactive tutorial (alias for workflow run tutorial)."""
+    from .workflows import run_tutorial
 
-    app = JSTDataApp(
-        client,
-        session_path=session,
+    run_tutorial(client, session_path=session, output_path=output)
+
+
+@cli.command("agent-guide")
+def agent_guide_cmd() -> None:
+    """Print a markdown bootstrap guide for agents (version-tied)."""
+    from .agent_guide import render_agent_guide
+
+    click.echo(render_agent_guide(cli), nl=False)
+
+
+@cli.command("steps")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable catalog")
+def steps_cmd(as_json: bool) -> None:
+    """List available investigation steps."""
+    import json as json_lib
+
+    from .workflows import list_steps
+
+    specs = list_steps()
+    if as_json:
+        click.echo(json_lib.dumps([s.to_dict() for s in specs], indent=2))
+        return
+    if not specs:
+        click.echo("No steps registered.")
+        return
+    for spec in specs:
+        click.echo(f"{spec.id:20} {spec.name} — {spec.description}")
+
+
+@cli.command("step")
+@click.argument("step_id")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable step metadata")
+def step_cmd(step_id: str, as_json: bool) -> None:
+    """Describe a step: arguments, requirements, example."""
+    import json as json_lib
+
+    from .workflows import format_step_help, get_step
+
+    try:
+        spec = get_step(step_id)
+    except KeyError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    if as_json:
+        click.echo(json_lib.dumps(spec.to_dict(), indent=2))
+        return
+    click.echo(format_step_help(spec), nl=False)
+
+
+@cli.command(
+    "run",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "allow_interspersed_args": False,
+    },
+)
+@click.option(
+    "--session",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Preload a session JSON into the pipeline",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=str),
+    help="Default path for export session writes",
+)
+@click.pass_context
+def run_cmd(ctx: click.Context, session: str | None, output: str | None) -> None:
+    """Run one or more steps, daisy-chained with ':'
+
+    \b
+    jst run console
+    jst run --session in.json console : console
+    jst run company-selector --industry semiconductors : console
+    """
+    from .workflows import PipelineError, run_pipeline
+
+    if not ctx.args:
+        click.echo(ctx.get_help())
+        raise SystemExit(2)
+    try:
+        run_pipeline(client, ctx.args, session_path=session, output_path=output)
+    except KeyError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    except PipelineError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(2)
+
+
+@cli.group("workflow")
+def workflow_group() -> None:
+    """Save and run named step pipelines."""
+
+
+# Backward-compatible plural alias (same group object).
+cli.add_command(workflow_group, "workflows")
+
+
+@workflow_group.command("ls")
+def workflow_ls() -> None:
+    """List saved workflows."""
+    from .workflows import (
+        format_pipeline,
+        is_bundled_workflow,
+        list_saved_workflows,
     )
-    app.run()
+
+    workflows = list_saved_workflows()
+    if not workflows:
+        click.echo("No saved workflows.")
+        return
+    for wf in workflows:
+        desc = wf.description or "-"
+        tag = " (built-in)" if is_bundled_workflow(wf.id) else ""
+        click.echo(
+            f"{wf.id:24}{tag:11} {desc:40} {format_pipeline(wf)}"
+        )
+
+
+@workflow_group.command("rm")
+@click.argument("workflow_id")
+def workflow_rm(workflow_id: str) -> None:
+    """Delete a saved workflow."""
+    from .workflows import WorkflowStoreError, delete_workflow
+
+    try:
+        delete_workflow(workflow_id)
+    except WorkflowStoreError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Removed workflow {workflow_id!r}.")
+
+
+@workflow_group.command(
+    "create",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "allow_interspersed_args": False,
+    },
+)
+@click.option(
+    "--id",
+    "workflow_id",
+    required=True,
+    help="Slug id for the workflow (e.g. gdp-rank)",
+)
+@click.option(
+    "--description",
+    default="",
+    help="Optional short description",
+)
+@click.pass_context
+def workflow_create(
+    ctx: click.Context, workflow_id: str, description: str
+) -> None:
+    """Save a step pipeline as a named workflow.
+
+    \b
+    jst workflow create --id gdp-rank -- console : rank --taxonomy country
+    jst workflow create --id gdp --description "GDP leaders" -- console : rank
+    """
+    import sys as _sys
+
+    from .workflows import (
+        PipelineError,
+        WorkflowStoreError,
+        create_workflow_from_tokens,
+        save_workflow,
+        workflow_exists,
+    )
+
+    # Hard boundary: pipeline must follow '--'. Enforce when this process
+    # looks like a real ``jst workflow create`` (CliRunner leaves sys.argv alone).
+    try:
+        create_at = _sys.argv.index("create")
+        via_workflow = any(
+            name in _sys.argv[:create_at] for name in ("workflow", "workflows")
+        )
+    except ValueError:
+        via_workflow = False
+    if via_workflow and "--" not in _sys.argv[create_at:]:
+        click.echo(
+            "Error: pass the pipeline after '--'.\n"
+            "Example: jst workflow create --id gdp-rank -- console : rank",
+            err=True,
+        )
+        sys.exit(2)
+    if not ctx.args:
+        click.echo(ctx.get_help())
+        raise SystemExit(2)
+
+    try:
+        if workflow_exists(workflow_id):
+            if not click.confirm(
+                f"Workflow {workflow_id!r} already exists. Overwrite?",
+                default=False,
+            ):
+                click.echo("Aborted.")
+                return
+        workflow = create_workflow_from_tokens(workflow_id, description, list(ctx.args))
+        path = save_workflow(workflow)
+    except WorkflowStoreError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(2)
+    except KeyError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    except PipelineError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(2)
+
+    click.echo(f"Saved workflow {workflow.id!r} → {path}")
+
+
+@workflow_group.command("run")
+@click.argument("workflow_id")
+@click.option(
+    "--session",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    help="Preload a session JSON into the pipeline",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=str),
+    help="Default path for export session writes",
+)
+def workflow_run(
+    workflow_id: str, session: str | None, output: str | None
+) -> None:
+    """Run a saved workflow (validates before launching the UI).
+
+    \b
+    jst workflow run gdp-rank
+    jst workflow run gdp-rank --session in.json
+    """
+    from .workflows import (
+        PipelineError,
+        TUTORIAL_WORKFLOW_ID,
+        WorkflowStoreError,
+        load_workflow,
+        resolve_saved_workflow,
+        run_resolved_pipeline,
+        run_tutorial,
+    )
+
+    try:
+        workflow = load_workflow(workflow_id)
+        if workflow_id == TUTORIAL_WORKFLOW_ID:
+            run_tutorial(client, session_path=session, output_path=output)
+            return
+        resolved = resolve_saved_workflow(workflow)
+    except WorkflowStoreError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except KeyError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    except PipelineError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(2)
+
+    run_resolved_pipeline(
+        client, resolved, session_path=session, output_path=output
+    )
+
 
 if __name__ == "__main__":
     try:
