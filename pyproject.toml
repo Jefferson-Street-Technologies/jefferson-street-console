@@ -6,8 +6,8 @@ authors = ["Mahfuj Ahbab"]
 readme = "README.md"
 license = "MIT"
 include = ["jstdata/workflows/bundled/*.yaml"]
-homepage = "https://github.com/Jefferson-Street-Technologies/jefferson-street-console"
-repository = "https://github.com/Jefferson-Street-Technologies/jefferson-street-console"
+homepage = "https://github.com/Jefferson-Street-Technologies/jstdata"
+repository = "https://github.com/Jefferson-Street-Technologies/jstdata"
 keywords = ["api", "cli", "data", "jefferson street", "economics", "finance"]
 classifiers = [
     "Development Status :: 4 - Beta",
