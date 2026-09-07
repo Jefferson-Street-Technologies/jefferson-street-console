@@ -1,14 +1,14 @@
 [tool.poetry]
 name = "jstdata"
-version = "0.1.0"
-description = "A Python interface to the Jefferson Street REST API."
+version = "0.2.0"
+description = "Python API, CLI, and interactive workflows for Jefferson Street financial and economic data."
 authors = ["Mahfuj Ahbab"]
 readme = "README.md"
 license = "MIT"
 include = ["jstdata/workflows/bundled/*.yaml"]
-homepage = "https://github.com/mahfuj/python_api"
-repository = "https://github.com/mahfuj/python_api"
-keywords = ["api", "cli", "data", "jefferson street"]
+homepage = "https://github.com/Jefferson-Street-Technologies/jefferson-street-python-api"
+repository = "https://github.com/Jefferson-Street-Technologies/jefferson-street-python-api"
+keywords = ["api", "cli", "data", "jefferson street", "economics", "finance"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -27,6 +27,7 @@ tabulate = "^0.9.0"
 textual = "^1.0.0"
 pyperclip = "^1.9.0"
 pyyaml = "^6.0.3"
+requests = "^2.31.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"
